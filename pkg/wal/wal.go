@@ -92,3 +92,6 @@ func (wm *WalManger) Background() {
         wm.triggerFlush() 
     }
 }
+func (wm*WalManger)Flush(){
+ 
+}
