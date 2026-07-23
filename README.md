@@ -1,4 +1,6 @@
-![SamKv Logo](./logo.png)
+<p align="center">
+  <img src="./logo.png" alt="SamKv Logo" width="220">
+</p>
 
 # SamKv
 
