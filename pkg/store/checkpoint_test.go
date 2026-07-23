@@ -31,6 +31,22 @@ func TestStoreCheckpointWritesSSTableAndResetsWAL(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("checkpoint SSTable stat error = %v", err)
 	}
+	manifest, exists, err := loadManifest(dir)
+	if err != nil {
+		t.Fatalf("loadManifest() error = %v", err)
+	}
+	if !exists {
+		t.Fatal("checkpoint did not create MANIFEST")
+	}
+	if manifest.NextFileID != 2 {
+		t.Fatalf("manifest next file id = %d, want 2", manifest.NextFileID)
+	}
+	if len(manifest.SSTables) != 1 {
+		t.Fatalf("manifest sstable count = %d, want 1", len(manifest.SSTables))
+	}
+	if manifest.SSTables[0].File != filepath.Base(path) {
+		t.Fatalf("manifest sstable file = %q, want %q", manifest.SSTables[0].File, filepath.Base(path))
+	}
 	if st.mem.Len() != 0 || st.mem.Size() != 0 {
 		t.Fatalf("memtable after checkpoint len=%d size=%d, want 0/0", st.mem.Len(), st.mem.Size())
 	}
@@ -72,5 +88,37 @@ func TestStoreCheckpointKeepsTombstoneAboveOlderSSTable(t *testing.T) {
 
 	if value, ok := st.Get("k"); ok {
 		t.Fatalf("Get(k) after tombstone checkpoint = %q, true; want false", value)
+	}
+}
+
+func TestStoreLoadsSSTablesFromManifest(t *testing.T) {
+	dir := t.TempDir()
+	st, err := NewStoreManger(dir, 1024)
+	if err != nil {
+		t.Fatalf("NewStoreManger() error = %v", err)
+	}
+
+	if err := st.Put("persisted", "value"); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	if _, err := st.Checkpoint(); err != nil {
+		t.Fatalf("Checkpoint() error = %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := NewStoreManger(dir, 1024)
+	if err != nil {
+		t.Fatalf("reopen NewStoreManger() error = %v", err)
+	}
+	defer reopened.Close()
+
+	value, ok := reopened.Get("persisted")
+	if !ok || value != "value" {
+		t.Fatalf("Get(persisted) after reopen = %q, %v; want value, true", value, ok)
+	}
+	if reopened.nextSSTableID != 2 {
+		t.Fatalf("reopened nextSSTableID = %d, want 2", reopened.nextSSTableID)
 	}
 }
