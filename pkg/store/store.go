@@ -34,6 +34,7 @@ type StoreManger struct {
 	nextSSTableID uint64
 	manifest      Manifest
 	sequence      atomic.Uint64
+	stats         statsCounters
 
 	flushCh       chan struct{}
 	compactionCh  chan struct{}
@@ -129,12 +130,14 @@ func (st *StoreManger) Put(key string, val string) error {
 	if err := st.mem.Put(key, val); err != nil {
 		return err
 	}
+	st.stats.writeOperations.Add(1)
 	st.maybeFreezeLocked()
 	return nil
 }
 
 // Get 按“活动表 -> 新只读表 -> 旧只读表 -> 新 SSTable -> 旧 SSTable”的顺序查询。
 func (st *StoreManger) Get(key string) (string, bool) {
+	st.stats.readOperations.Add(1)
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 
@@ -179,6 +182,7 @@ func (st *StoreManger) Delete(key string) error {
 	if err := st.mem.Delete(key); err != nil {
 		return err
 	}
+	st.stats.writeOperations.Add(1)
 	st.maybeFreezeLocked()
 	return nil
 }
@@ -281,6 +285,7 @@ func (st *StoreManger) Checkpoint() (string, error) {
 		err = st.wm.Flush()
 	}
 	if err == nil {
+		st.stats.checkpoints.Add(1)
 		st.clearBackgroundError()
 	}
 	return path, err

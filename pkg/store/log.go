@@ -25,39 +25,60 @@ type LogEntry struct {
 // WriteLog 生成“时间 + 有序标签 + 序列号”复合 key，并写入压缩后的日志内容。
 // Sequence 为 0 时由 Store 自动分配；返回值是最终使用的序列号。
 func (st *StoreManger) WriteLog(entry LogEntry) (uint64, error) {
-	if err := validateQueryLabels(entry.Labels); err != nil {
+	sequences, err := st.WriteLogs([]LogEntry{entry})
+	if err != nil {
 		return 0, err
+	}
+	return sequences[0], nil
+}
+
+// WriteLogs 把多条结构化日志编码成一个 Batch，减少 WAL 提交与锁竞争。
+func (st *StoreManger) WriteLogs(entries []LogEntry) ([]uint64, error) {
+	if len(entries) == 0 {
+		return nil, nil
 	}
 
-	sequence := entry.Sequence
-	if sequence == 0 {
-		sequence = st.sequence.Add(1)
-	} else {
-		st.observeSequence(sequence)
-	}
+	batch := NewBatch()
+	sequences := make([]uint64, 0, len(entries))
+	for _, entry := range entries {
+		if err := validateQueryLabels(entry.Labels); err != nil {
+			return nil, err
+		}
 
-	timestamp := entry.Timestamp.UnixNano()
-	key, err := utils.EncodeKey(timestamp, entry.Labels, sequence)
-	if err != nil {
-		return 0, err
+		sequence := entry.Sequence
+		if sequence == 0 {
+			sequence = st.sequence.Add(1)
+		} else {
+			st.observeSequence(sequence)
+		}
+
+		timestamp := entry.Timestamp.UnixNano()
+		key, err := utils.EncodeKey(timestamp, entry.Labels, sequence)
+		if err != nil {
+			return nil, err
+		}
+		value, err := utils.NewValue(timestamp, entry.Message)
+		if err != nil {
+			return nil, err
+		}
+		encodedValue, err := value.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+
+		batch.Put(string(key), string(encodedValue))
+		sequences = append(sequences, sequence)
 	}
-	value, err := utils.NewValue(timestamp, entry.Message)
-	if err != nil {
-		return 0, err
+	if err := st.WriteBatch(batch); err != nil {
+		return nil, err
 	}
-	encodedValue, err := value.MarshalBinary()
-	if err != nil {
-		return 0, err
-	}
-	if err := st.Put(string(key), string(encodedValue)); err != nil {
-		return 0, err
-	}
-	return sequence, nil
+	return sequences, nil
 }
 
 // Query 按闭区间 [startTime, endTime] 查询日志，并用 labels 做子集匹配。
 // 返回结果按复合 key 排序，即先按时间，再按标签和序列号排序。
 func (st *StoreManger) Query(startTime, endTime time.Time, labels []utils.Label) ([]LogEntry, error) {
+	st.stats.readOperations.Add(1)
 	if endTime.Before(startTime) {
 		return nil, ErrInvalidTimeRange
 	}

@@ -96,6 +96,7 @@ func (st *StoreManger) WriteBatch(batch *Batch) error {
 			}
 		}
 	}
+	st.stats.writeOperations.Add(uint64(len(batch.operations)))
 	st.maybeFreezeLocked()
 	return nil
 }

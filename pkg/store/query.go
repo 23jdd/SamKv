@@ -10,6 +10,7 @@ var ErrInvalidRange = errors.New("store: invalid key range")
 // Scan 合并 MemTable 和所有 SSTable，返回 [startKey, endKey) 内的最新可见记录。
 // 相同 key 由较新的 SSTable 或 MemTable 覆盖，最终结果不会包含墓碑。
 func (st *StoreManger) Scan(startKey, endKey string) ([]Record, error) {
+	st.stats.readOperations.Add(1)
 	return st.scanWithTableFilter(startKey, endKey, nil)
 }
 

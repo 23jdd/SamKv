@@ -28,6 +28,7 @@ func (st *StoreManger) Compact() (CompactionResult, error) {
 		st.mu.RUnlock()
 		return CompactionResult{}, ErrStoreClosed
 	}
+	st.stats.compactions.Add(1)
 	tables := append([]*SStable(nil), st.sstables...)
 	options := st.options
 	now := st.now

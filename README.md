@@ -1,239 +1,221 @@
-我将为您设计一个专门针对日志场景的键值（KV）数据库。日志数据通常具有 写多读少、追加写入、按时间范围查询、数据量大、有生命周期 等特点。本设计将围绕这些核心需求展开。
-🎯 一、需求分析：日志场景的核心特征
-在设计之前，我们需要明确日志数据的典型访问模式和性能要求：
-特性	描述	设计影响	
-写入模式	高吞吐、追加写入（很少更新/删除）	采用 LSM-Tree 结构，将随机写转换为顺序写	
-查询模式	按时间范围查询（如最近1小时）、按标签筛选（如app=nginx, level=ERROR）	键设计需包含时间，并支持标签索引	
-数据保留	时间基准保留（如7天）或大小基准保留	内置数据生命周期管理和清理机制	
-数据量	海量数据（TB级甚至更高）	存储需高度压缩，支持分层存储（冷热数据分离）	
-数据内容	半结构化文本（日志消息），可能包含元数据（标签）	值部分支持压缩，标签可索引	
+# SamKV
 
-🏗️ 二、整体架构：基于LSM-Tree的日志KV数据库
-我们采用 LSM-Tree（Log-Structured Merge Tree） 作为核心存储结构，因为它专为高写入吞吐设计。整体架构如下：
-flowchart LR
-    A[写入请求<br>日志条目] --> B[写入 WAL<br>（预写日志，确保持久性）]
-    B --> C[写入 MemTable<br>（内存有序表，如跳表）]
-    C --> D{MemTable 达到阈值?}
-    D -- 是 --> E[转为 Immutable MemTable<br>准备刷盘]
-    E --> F[Flush 到磁盘<br>生成 SSTable 文件]
-    D -- 否 --> G[继续写入]
-    F --> H[SSTable 在磁盘分层<br>L0, L1, L2...]
-    H --> I[后台 Compaction<br>合并、压缩、清理过期数据]
-    J[查询请求<br>时间范围+标签] --> K[内存 MemTable 查询]
-    K --> L[磁盘 SSTable 查询<br>（可能使用布隆过滤器优化）]
-    L --> M[合并结果并返回]
-    I --> N[数据保留策略执行<br>删除过期文件]
-🔑 三、核心数据结构设计
-1. 键（Key）设计：时间 + 标签 + 唯一ID
-键的设计至关重要，它决定了查询效率。我们采用复合键设计：
-Key = [时间戳 (固定长度)] + [标签键值对 (有序编码)] + [唯一序列号 (可选)]
-示例：2024-01-01T10:00:00Z|app=nginx|level=ERROR|host=server1|00001
-时间戳：使用固定长度的字符串（如ISO 8601格式），便于范围查询和排序。
-标签：采用类似Prometheus的标签模型，标签名和值按字典序编码，确保相同标签组合的键相邻，便于范围查询。
-序列号：用于保证同一时间戳下的键唯一性（可选）。
-编码方式：为了高效比较和范围查询，我们可以将键编码为：
-时间戳：使用 big-endian 编码的整数（纳秒或毫秒级）。
-标签：每个标签对编码为 label_name=value，并按标签名排序。
-2. 值（Value）设计：压缩的日志内容
-值部分存储实际的日志内容，可以是原始文本或结构化数据（如JSON）。由于日志内容往往重复性高，我们采用压缩算法（如 Snappy、Zstd）进行压缩。
-type Value struct {
-    Timestamp int64    // 日志产生时间
-    Labels    []Label  // 标签键值对（可选，也可放在键中）
-    Message   []byte   // 日志内容（已压缩）
-}
-type Label struct {
-    Name, Value string
-}
-3. MemTable 实现：内存中的有序表
-我们使用 跳表（SkipList） 作为 MemTable 的内部结构，因为它支持高效的插入、查找和范围查询。
-type MemTable struct {
-    mu     sync.RWMutex
-    table  *skiplist.SkipList  // 键为 []byte，值为 *Value
-    size   int                 // 当前数据大小
-    limit  int                 // 触发刷盘的阈值
-}
-4. SSTable 文件格式：借鉴现有设计
-SSTable（Sorted String Table）文件格式借鉴 LevelDB 和 RocksDB，并针对日志场景优化：
-<文件起始>
-[数据块 1] [数据块 2] ... [数据块 N]
-[元数据块]（包含布隆过滤器、时间范围统计等）
-[索引块]（每个数据块的元数据：起始键、偏移量）
-[页脚]（指向索引块和元数据索引）
-<文件结束>
-关键改进：
-元数据块中存储该文件的时间范围（minTime, maxTime）和标签统计（如标签基数），用于查询时快速过滤。
-布隆过滤器构建在键上，加速查询是否存在某个键。
-🚀 四、核心操作流程
-1. 写入流程（Append-Only）
-客户端：将日志条目转换为键值对，键包含时间戳和标签。
-数据库：
-将键值对追加到 WAL（Write-Ahead Log），确保持久性。
-将键值对插入 MemTable。
-当 MemTable 达到阈值（如 4MB），转为 Immutable MemTable，并启动后台线程 Flush 到磁盘生成 SSTable。
-响应：立即返回成功，无需等待刷盘（异步刷盘）。
-2. 查询流程（时间范围 + 标签筛选）
-查询请求通常为：查询时间范围 [t1, t2] 内，标签为 {app="nginx", level="ERROR"} 的日志。
-解析查询：解析出时间范围和标签条件。
-内存查询：首先查询 MemTable 和 Immutable MemTable。
-磁盘查询：
-根据 时间范围 过滤出可能包含数据的 SSTable 文件（通过文件元数据中的 minTime/maxTime）。
-根据 标签条件，利用 SSTable 中的标签索引（或布隆过滤器）进一步缩小范围。
-在选定的 SSTable 中，使用 索引块 定位到可能包含目标键的数据块。
-读取数据块，解压缩，并返回符合条件的结果。
-结果合并：合并来自 MemTable 和多个 SSTable 的结果，按时间排序返回。
-3. Compaction 与 数据保留策略
-Compaction（合并）是 LSM-Tree 的灵魂，对于日志数据库尤为关键：
-目的：减少文件数量、清理过期数据、回收空间。
-策略：采用类似 RocksDB 的分层 Compaction（Leveled Compaction），但可以优化：
-时间感知合并：合并时优先处理时间相近的文件，以更好地按时间保留数据。
-保留策略执行：在 Compaction 过程中，删除超过保留时间（如 7 天）的键值对。
-数据保留机制：
-基于时间：配置保留时长（如 retention=7d），后台 Compaction 时清理。
-基于大小：配置总大小上限，当数据量超过时，删除最旧的数据。
-类似于 Kafka 的 Log Compaction：对于需要保留每个键最新值的场景（如系统状态表），可采用键基准保留（Key-based Retention）。
-📦 五、存储优化：冷热数据分离与压缩
-日志数据具有明显的时间局部性：新数据频繁被访问，旧数据访问量低。我们可以设计 冷热分离存储：
-flowchart LR
-    A[新日志数据] --> B[热数据层<br>SSD 存储<br>高性能压缩]
-    B --> C[数据陈旧<br>（如超过1天）]
-    C --> D[冷数据层<br>HDD 或 对象存储<br>高压缩率压缩]
-    D --> E[访问冷数据<br>自动迁移回热层]
-热数据：存储最近几小时或一天的数据，使用 SSD，压缩算法可稍弱（如 Snappy）。
-冷数据：存储较旧的数据，使用 HDD 或对象存储（如 S3），采用高压缩比算法（如 Zstd），并可能进一步降低副本数。
-标签索引优化：
-对于高频查询的标签（如 app, level），我们可以构建 二级索引，例如：
-倒排索引：标签值 -> 键列表。
-但考虑到日志数据量，索引可能很大。可参考 Loki 的做法：只索引标签，不索引日志内容，以简化运维和降低成本。
-🛠️ 六、Go 语言核心结构示例
-以下是一个简化版的 Go 实现，展示核心数据结构：
-package logkv
+SamKV 是一个面向日志场景的单机 LSM-Tree KV 存储引擎。它已经实现从 WAL、MemTable、Immutable MemTable 到 SSTable、Manifest、范围查询和 Compaction 的完整本地持久化链路。
+
+## 已实现能力
+
+- WAL 顺序写入、CRC32 校验、后台刷盘、超 4 KiB 单记录直写
+- 崩溃恢复、半条 WAL 尾记录修复、WAL 原子重写
+- 并发安全 SkipList MemTable、原子大小统计、墓碑
+- 达到阈值后切换 Immutable MemTable，后台生成 SSTable
+- SSTable DataBlock、MetaBlock、IndexBlock、Footer 和 6 字节 Magic
+- DataBlock 前缀压缩和 restart point
+- key BloomFilter、标签 BloomFilter、时间范围和标签基数元数据
+- Manifest 原子发布、备份恢复、SSTable 文件编号和层级记录
+- 点查询、通用 key 范围扫描、时间范围与标签子集查询
+- 时间 + 有序标签 + 唯一序列号复合 key
+- Gzip 压缩日志 value
+- 通用 Batch 和结构化日志 Batch
+- 全量 Compaction、版本覆盖、墓碑回收
+- 按时间和近似容量执行日志保留
+- 自动 Compaction 和运行状态统计
+
+## 快速使用
+
+```go
+package main
+
 import (
-	"bytes"
-	"encoding/binary"
-	"sync"
+	"fmt"
+	"log"
 	"time"
-)
-// Label 标签键值对
-type Label struct {
-	Name, Value string
-}
-// LogEntry 日志条目
-type LogEntry struct {
-	Timestamp time.Time
-	Labels    []Label
-	Message   []byte // 原始日志内容，压缩后存储
-}
-// Key 编码为 []byte，格式：[时间戳(8字节)][标签1][标签2]...
-func (e *LogEntry) Key() []byte {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(e.Timestamp.UnixNano()))
-	// 编码标签：长度前缀 + 字符串
-	for _, l := range e.Labels {
-		buf = append(buf, encodeString(l.Name)...)
-		buf = append(buf, encodeString(l.Value)...)
-	}
-	return buf
-}
-func encodeString(s string) []byte {
-	buf := make([]byte, 2+len(s))
-	binary.BigEndian.PutUint16(buf, uint16(len(s)))
-	copy(buf[2:], s)
-	return buf
-}
-// MemTable 内存表，使用跳表实现
-type MemTable struct {
-	mu    sync.RWMutex
-	table map[string]*LogEntry // 实际使用跳表更佳
-	size  int
-	limit int // 触发刷盘的阈值
-}
-func NewMemTable(limit int) *MemTable {
-	return &MemTable{
-		table: make(map[string]*LogEntry),
-		limit: limit,
-	}
-}
-func (m *MemTable) Put(key []byte, entry *LogEntry) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.table[string(key)] = entry
-	m.size += len(key) + len(entry.Message)
-}
-func (m *MemTable) Get(key []byte) (*LogEntry, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	entry, ok := m.table[string(key)]
-	return entry, ok
-}
-// SSTable 文件元数据，存储在索引块中
-type SSTableMeta struct {
-	MinTime, MaxTime time.Time
-	LabelStats        map[string]struct { // 标签基数统计
-		Count int
-	}
-	FilterBloom      []byte // 布隆过滤器
-}
-// StorageEngine 存储引擎核心
-type StorageEngine struct {
-	mu            sync.RWMutex
-	memTable      *MemTable
-	wal           *os.File // 预写日志
-	sstables      []SSTableMeta
-	compactionCh  chan struct{}
-	retentionDays int // 数据保留天数
-}
-func NewStorageEngine(dataDir string, retentionDays int) (*StorageEngine, error) {
-	// 初始化：打开 WAL，加载已存在的 SSTable 元数据等
-	return &StorageEngine{
-		memTable:      NewMemTable(4 * 1024 * 1024), // 4MB 触发刷盘
-		retentionDays: retentionDays,
-		compactionCh:  make(chan struct{}, 1),
-	}, nil
-}
-// Write 写入日志
-func (s *StorageEngine) Write(entry *LogEntry) error {
-	key := entry.Key()
-	// 1. 写 WAL（省略具体实现）
-	// 2. 写 MemTable
-	s.memTable.Put(key, entry)
-	// 3. 检查是否需要刷盘
-	if s.memTable.size >= s.memTable.limit {
-		go s.flush()
-	}
-	return nil
-}
-func (s *StorageEngine) flush() {
-	// 将 MemTable 刷盘为 SSTable 文件，并更新元数据
-	// 实现：创建新文件，写入数据块、索引块、元数据等
-	// 更新 s.sstables 列表
-}
-// Query 查询日志
-func (s *StorageEngine) Query(startTime, endTime time.Time, labels []Label) ([]*LogEntry, error) {
-	var results []*LogEntry
-	// 1. 查询 MemTable
-	// 2. 查询 SSTable（根据时间范围和标签过滤）
-	return results, nil
-}
-📊 七、性能优化与运维考量
-写入性能优化：
-使用 批量写入（Batch Write）减少 WAL 刷盘次数。
-MemTable 使用 跳表 或 平衡树 保证有序性。
-查询性能优化：
-布隆过滤器：减少不必要的磁盘读取。
-时间范围过滤：利用 SSTable 元数据中的时间范围，避免读取无关文件。
-标签索引：为高频查询标签构建二级索引或倒排索引。
-运维友好性：
-单一存储后端：类似 Loki，将数据存储在对象存储中，降低运维复杂度。
-水平扩展：设计支持分片（Sharding），按时间范围或标签分片。
-监控与告警：
-监控写入速率、查询延迟、Compaction 进度、存储使用情况等。
 
-🎁 八、总结：设计要点一览
-维度	设计决策	理由	
-存储结构	LSM-Tree	高写入吞吐，适合追加写入	
-键设计	时间戳 + 标签	支持时间范围查询和标签筛选	
-数据保留	时间基准保留 + Compaction 时清理	自动化管理数据生命周期	
-查询优化	布隆过滤器 + 时间范围元数据	减少磁盘 I/O，加速查询	
-存储介质	冷热分离：SSD + 对象存储	平衡性能与成本	
-索引策略	只索引标签，不索引日志内容	简化设计，降低成本	
-这个设计融合了 LSM-Tree、Loki 的标签索引思想 以及 Kafka 的日志保留策略，旨在构建一个 高性能、易运维、成本优化 的日志 KV 数据库。根据实际需求，可以进一步细化或调整各部分实现。
+	"github.com/23jdd/SamKv/pkg/store"
+	"github.com/23jdd/SamKv/pkg/utils"
+)
+
+func main() {
+	options := store.DefaultOptions()
+	options.MemTableLimit = 4 * 1024 * 1024
+	options.CompactionThreshold = 4
+	options.Retention = 7 * 24 * time.Hour
+	options.MaxSizeBytes = 10 * 1024 * 1024 * 1024
+
+	db, err := store.NewStoreManagerWithOptions("./data", options)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.WriteLog(store.LogEntry{
+		Timestamp: time.Now().UTC(),
+		Labels: []utils.Label{
+			{Name: "app", Value: "nginx"},
+			{Name: "level", Value: "ERROR"},
+		},
+		Message: []byte("upstream connection failed"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	end := time.Now().UTC()
+	start := end.Add(-time.Hour)
+	logs, err := db.Query(start, end, []utils.Label{
+		{Name: "app", Value: "nginx"},
+		{Name: "level", Value: "ERROR"},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, entry := range logs {
+		fmt.Printf("%s %s
+", entry.Timestamp.Format(time.RFC3339Nano), entry.Message)
+	}
+}
+```
+
+`Query` 的时间范围是闭区间 `[startTime, endTime]`。标签使用子集匹配，例如只传 `app=nginx` 会返回所有同时包含该标签的日志。
+
+## 普通 KV
+
+```go
+db, err := store.NewStoreManager("./data", 4*1024*1024)
+if err != nil {
+	panic(err)
+}
+defer db.Close()
+
+_ = db.Put("key", "value")
+value, ok := db.Get("key")
+_ = value
+_ = ok
+
+_ = db.Delete("key")
+records, err := db.Scan("a", "z") // [a, z)
+_ = records
+_ = err
+```
+
+## 批量写
+
+```go
+batch := store.NewBatch().
+	Put("a", "1").
+	Put("b", "2").
+	Delete("a")
+
+if err := db.WriteBatch(batch); err != nil {
+	panic(err)
+}
+```
+
+结构化日志可以使用 `WriteLogs`，多条记录会合并成一次 WAL 追加：
+
+```go
+sequences, err := db.WriteLogs([]store.LogEntry{
+	{Timestamp: time.Now(), Labels: labels, Message: []byte("first")},
+	{Timestamp: time.Now(), Labels: labels, Message: []byte("second")},
+})
+_ = sequences
+_ = err
+```
+
+Batch 会在进程内按顺序整体应用，并减少 WAL 提交和锁竞争。WAL 恢复仍按单条记录重放，因此它不是跨记录事务协议。
+
+## 配置
+
+```go
+type Options struct {
+	MemTableLimit       int
+	AutoCheckpoint      bool
+	CompactionThreshold int
+	Retention           time.Duration
+	MaxSizeBytes        int64
+}
+```
+
+- `MemTableLimit`：活动 MemTable 的近似字节阈值；`0` 表示不按大小自动切换。
+- `AutoCheckpoint`：达到阈值后是否切换 Immutable MemTable 并后台刷盘。
+- `CompactionThreshold`：SSTable 数量达到该值后自动 Compaction；`0` 表示关闭。
+- `Retention`：Compaction 时删除早于保留窗口的结构化日志。
+- `MaxSizeBytes`：Compaction 时按时间从旧到新淘汰日志，直到近似记录大小不超过限制。
+
+`DefaultOptions` 默认启用 4 MiB MemTable 和 4 张 SSTable 的自动 Compaction 阈值。
+
+## Key 与 Value
+
+结构化日志 key 的二进制布局：
+
+```text
+[8 bytes ordered timestamp][sorted label_name=label_value][0x00][8 bytes sequence]
+```
+
+时间戳使用翻转符号位后的 big-endian `int64`，因此有符号时间顺序与字节序一致。标签按名称和值排序，并对 `%`、`|`、`=` 转义。序列号由 Store 自动递增，也可以由调用方显式指定。
+
+Value 布局：
+
+```text
+[version][compression][timestamp][message length][compressed message]
+```
+
+标签只保存在 key 中。当前支持原文和 Gzip，默认使用 Gzip。
+
+## SSTable 格式
+
+```text
+[DataBlock 1] ... [DataBlock N]
+[MetaBlock]
+[IndexBlock]
+[Footer]
+```
+
+- `DataBlock`：有序记录、前缀压缩、restart point、墓碑标记。
+- `MetaBlock`：key 范围、时间范围、记录数、key/标签 BloomFilter、标签基数。
+- `IndexBlock`：每个 DataBlock 的首尾 key、偏移和大小。
+- `Footer`：6 字节 Magic `流萤`、版本号、MetaBlock 和 IndexBlock 位置。
+
+打开 SSTable 时只加载 Footer、MetaBlock 和 IndexBlock，DataBlock 在查询时按需读取。
+
+## 持久化顺序
+
+```text
+WAL -> active MemTable -> Immutable MemTable -> SSTable -> MANIFEST
+```
+
+后台刷盘发布 SSTable 后，会根据仍未落盘的 MemTable 重写 WAL。关键崩溃点都保留可恢复副本：
+
+- SSTable 发布前崩溃：旧 WAL 恢复全部记录。
+- Manifest 发布后、WAL 裁剪前崩溃：SSTable 与旧 WAL 可能重复，但查询结果一致。
+- 替换 Manifest 或 WAL 中途崩溃：`.bak` 文件用于恢复。
+- WAL 尾部只有半条记录：启动时截断到最后一条完整记录。
+
+`Close` 会停止后台任务并刷出 WAL 缓冲，但不会强制生成 SSTable；下次打开会自动回放 WAL。需要明确落成 SSTable 时调用 `Checkpoint`。
+
+## Compaction 与统计
+
+```go
+result, err := db.Compact()
+stats := db.Stats()
+_ = result
+_ = err
+_ = stats
+```
+
+Compaction 合并当前全部 SSTable，因此可以安全删除被覆盖版本和墓碑。结构化日志同时应用时间和容量保留。输出文件记录为 L1，新刷盘文件记录为 L0。
+
+`Stats` 提供读写次数、Checkpoint/Compaction 次数、活动和只读 MemTable、WAL/SSTable 字节数、层级文件数及后台错误。
+
+## 测试
+
+```bash
+go test ./...
+go test -race ./pkg/store ./pkg/wal ./pkg/skipList
+go vet ./...
+```
+
+测试覆盖 WAL 大记录、崩溃尾部、Manifest 连续替换、SSTable 元数据、墓碑、范围合并、自动刷盘、并发 MemTable 切换、批量恢复、Compaction 和保留策略。
+
+## 当前边界
+
+当前实现是单进程、本地文件系统存储。L0/L1 已提供本地冷热层级语义，但 SSD/HDD 分目录、对象存储迁移、分片和分布式副本不属于本地存储内核，由上层部署和后续适配器负责。

@@ -123,3 +123,36 @@ func TestLogSequenceContinuesAfterRestart(t *testing.T) {
 		t.Fatalf("Query() returned %d entries, want 2", len(got))
 	}
 }
+
+func TestWriteLogsUsesOneBatchAndKeepsSequenceOrder(t *testing.T) {
+	options := DefaultOptions()
+	options.AutoCheckpoint = false
+	store, err := NewStoreMangerWithOptions(t.TempDir(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	base := time.Unix(2_000, 0).UTC()
+	labels := []utils.Label{{Name: "app", Value: "batch"}}
+	sequences, err := store.WriteLogs([]LogEntry{
+		{Timestamp: base, Labels: labels, Message: []byte("one")},
+		{Timestamp: base.Add(time.Second), Labels: labels, Message: []byte("two")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sequences) != 2 || sequences[0] == 0 || sequences[1] <= sequences[0] {
+		t.Fatalf("WriteLogs sequences = %#v", sequences)
+	}
+	got, err := store.Query(base, base.Add(time.Second), labels)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || string(got[0].Message) != "one" || string(got[1].Message) != "two" {
+		t.Fatalf("Query batch logs = %#v", got)
+	}
+	if stats := store.Stats(); stats.WriteOperations != 2 {
+		t.Fatalf("WriteOperations = %d, want 2", stats.WriteOperations)
+	}
+}
