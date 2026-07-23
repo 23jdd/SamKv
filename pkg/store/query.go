@@ -39,6 +39,11 @@ func (st *StoreManger) scanWithTableFilter(
 			latest[record.Key] = record
 		}
 	}
+	for _, immutable := range st.immutables {
+		for _, record := range immutable.Scan(startKey, endKey) {
+			latest[record.Key] = record
+		}
+	}
 	for _, record := range st.mem.Scan(startKey, endKey) {
 		latest[record.Key] = record
 	}

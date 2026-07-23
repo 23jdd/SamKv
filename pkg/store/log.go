@@ -170,6 +170,9 @@ func (st *StoreManger) restoreSequence() error {
 		}
 		observeRecords(records)
 	}
+	for _, immutable := range st.immutables {
+		observeRecords(immutable.Entries())
+	}
 	observeRecords(st.mem.Entries())
 	st.sequence.Store(maxSequence)
 	return nil

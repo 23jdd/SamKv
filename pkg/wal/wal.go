@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -39,6 +40,10 @@ func New(dir string) (*WalManger, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, "wal.log")
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		// Windows 替换 WAL 时可能在崩溃点只留下备份文件。
+		_ = os.Rename(path+".bak", path)
+	}
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, err

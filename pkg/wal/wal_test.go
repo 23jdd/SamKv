@@ -46,3 +46,36 @@ func TestAppendRecordLargerThanBufferWritesDirectly(t *testing.T) {
 		t.Fatalf("ReadRecord() = %#v, want large put record", got)
 	}
 }
+
+func TestReplaceRewritesWALContents(t *testing.T) {
+	dir := t.TempDir()
+	wm, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wm.AppendRecord(PutRecord([]byte("old"), []byte("value"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := wm.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement, err := PutRecord([]byte("new"), []byte("value")).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wm.Replace(replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err := wm.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "wal.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, replacement) {
+		t.Fatalf("wal.log = %x, want %x", got, replacement)
+	}
+}
