@@ -29,27 +29,25 @@ var (
 )
 
 // Value 保存日志内容。
-// Message 字段存储的是压缩后的内容；使用 DecompressedMessage 可以还原原始日志。
+// 标签已经编码在 Key 中，所以 Value 只保存时间戳和压缩后的日志内容。
 type Value struct {
 	Timestamp   int64
-	Labels      []Label
 	Message     []byte
 	Compression byte
 }
 
 // NewValue 创建一个 gzip 压缩的日志 Value。
-func NewValue(timestamp int64, labels []Label, message []byte) (Value, error) {
-	return NewValueWithCompression(timestamp, labels, message, CompressionGzip)
+func NewValue(timestamp int64, message []byte) (Value, error) {
+	return NewValueWithCompression(timestamp, message, CompressionGzip)
 }
 
 // NewValueWithCompression 创建指定压缩格式的日志 Value。
-func NewValueWithCompression(timestamp int64, labels []Label, message []byte, compression byte) (Value, error) {
-	labels = NormalizeLabels(labels)
+func NewValueWithCompression(timestamp int64, message []byte, compression byte) (Value, error) {
 	compressed, err := compressMessage(message, compression)
 	if err != nil {
 		return Value{}, err
 	}
-	return Value{Timestamp: timestamp, Labels: labels, Message: compressed, Compression: compression}, nil
+	return Value{Timestamp: timestamp, Message: compressed, Compression: compression}, nil
 }
 
 // DecompressedMessage 返回解压后的原始日志内容。
@@ -58,28 +56,13 @@ func (v Value) DecompressedMessage() ([]byte, error) {
 }
 
 // MarshalBinary 将 Value 编码成二进制格式。
-// 格式：version、compression、timestamp、labels、compressed message。
+// 格式：version、compression、timestamp、compressed message。
 func (v Value) MarshalBinary() ([]byte, error) {
-	labels := NormalizeLabels(v.Labels)
 	var buf bytes.Buffer
 	buf.WriteByte(valueVersion)
 	buf.WriteByte(v.Compression)
 	if err := writeInt64(&buf, v.Timestamp); err != nil {
 		return nil, err
-	}
-	if err := writeUint32(&buf, uint32(len(labels))); err != nil {
-		return nil, err
-	}
-	for _, label := range labels {
-		if err := validateLabel(label); err != nil {
-			return nil, err
-		}
-		if err := writeBytes(&buf, []byte(label.Name)); err != nil {
-			return nil, err
-		}
-		if err := writeBytes(&buf, []byte(label.Value)); err != nil {
-			return nil, err
-		}
 	}
 	if err := writeBytes(&buf, v.Message); err != nil {
 		return nil, err
@@ -108,22 +91,6 @@ func UnmarshalValue(data []byte) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	labelCount, err := readUint32(reader)
-	if err != nil {
-		return Value{}, err
-	}
-	labels := make([]Label, 0, labelCount)
-	for i := uint32(0); i < labelCount; i++ {
-		name, err := readBytes(reader)
-		if err != nil {
-			return Value{}, err
-		}
-		value, err := readBytes(reader)
-		if err != nil {
-			return Value{}, err
-		}
-		labels = append(labels, Label{Name: string(name), Value: string(value)})
-	}
 	message, err := readBytes(reader)
 	if err != nil {
 		return Value{}, err
@@ -131,7 +98,7 @@ func UnmarshalValue(data []byte) (Value, error) {
 	if reader.Len() != 0 {
 		return Value{}, ErrInvalidValue
 	}
-	return Value{Timestamp: timestamp, Labels: labels, Message: message, Compression: compression}, nil
+	return Value{Timestamp: timestamp, Message: message, Compression: compression}, nil
 }
 
 func compressMessage(message []byte, compression byte) ([]byte, error) {

@@ -72,7 +72,7 @@ func TestEncodeKeyString(t *testing.T) {
 
 func TestValueCompressionAndBinaryRoundTrip(t *testing.T) {
 	message := []byte("nginx error nginx error nginx error")
-	value, err := NewValue(1704103200000000000, []Label{{Name: "level", Value: "ERROR"}, {Name: "app", Value: "nginx"}}, message)
+	value, err := NewValue(1704103200000000000, message)
 	if err != nil {
 		t.Fatalf("NewValue() error = %v", err)
 	}
@@ -95,15 +95,14 @@ func TestValueCompressionAndBinaryRoundTrip(t *testing.T) {
 	if !bytes.Equal(plain, message) {
 		t.Fatalf("decompressed message = %q, want %q", plain, message)
 	}
-	wantLabels := []Label{{Name: "app", Value: "nginx"}, {Name: "level", Value: "ERROR"}}
-	if decoded.Timestamp != value.Timestamp || decoded.Compression != CompressionGzip || !reflect.DeepEqual(decoded.Labels, wantLabels) {
+	if decoded.Timestamp != value.Timestamp || decoded.Compression != CompressionGzip {
 		t.Fatalf("decoded value = %#v", decoded)
 	}
 }
 
 func TestValueWithoutCompressionRoundTrip(t *testing.T) {
 	message := []byte("raw log")
-	value, err := NewValueWithCompression(1, nil, message, CompressionNone)
+	value, err := NewValueWithCompression(1, message, CompressionNone)
 	if err != nil {
 		t.Fatalf("NewValueWithCompression() error = %v", err)
 	}
