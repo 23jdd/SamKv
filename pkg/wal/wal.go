@@ -27,6 +27,8 @@ type WalManger struct {
 	bufmu        sync.Mutex
 	flushCond    sync.Cond
 	closed       bool
+	done         chan struct{}
+	closeOnce    sync.Once
 }
 
 // seq
@@ -46,6 +48,7 @@ func New(dir string) (*WalManger, error) {
 	wm.buffer = make([]byte, 0, DefaultSize)
 	wm.flushBatch = make([]byte, 0, DefaultSize)
 	wm.Dir = dir
+	wm.done = make(chan struct{})
 	wm.flushCond = *sync.NewCond(&wm.bufmu)
 	go wm.Background()
 	return wm, nil
@@ -104,10 +107,15 @@ func (wm *WalManger) writeAndSyncLocked(data []byte) error {
 // flusher
 func (wm *WalManger) Background() {
 	ticker := time.NewTicker(FlushInterval)
+	defer ticker.Stop()
 	for {
-		<-ticker.C
-		if err := wm.triggerFlush(); err != nil {
-			log.Println("[WAL] Error", err)
+		select {
+		case <-ticker.C:
+			if err := wm.triggerFlush(); err != nil {
+				log.Println("[WAL] Error", err)
+			}
+		case <-wm.done:
+			return
 		}
 	}
 }

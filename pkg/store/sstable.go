@@ -279,12 +279,23 @@ func (s *SStable) Close() error {
 
 // Get 查询 key 对应的 value。
 // 查询流程：BloomFilter 快速排除 -> IndexBlock 定位 DataBlock -> 解码 DataBlock 后二分查找。
+// 如果查询到墓碑，返回 ok=false。
 func (s *SStable) Get(key string) (string, bool, error) {
+	record, ok, err := s.GetRecord(key)
+	if err != nil || !ok || record.Deleted {
+		return "", false, err
+	}
+	return record.Val, true, nil
+}
+
+// GetRecord 查询 key 对应的原始 SSTable 记录。
+// 返回的 Record 可能是墓碑，调用方需要检查 Deleted 字段。
+func (s *SStable) GetRecord(key string) (Record, bool, error) {
 	if s == nil {
-		return "", false, ErrInvalidSSTable
+		return Record{}, false, ErrInvalidSSTable
 	}
 	if s.bf != nil && !s.bf.ContainsString(key) {
-		return "", false, nil
+		return Record{}, false, nil
 	}
 
 	if s.file == nil {
@@ -292,36 +303,30 @@ func (s *SStable) Get(key string) (string, bool, error) {
 			return s.rs[i].Key >= key
 		})
 		if idx < len(s.rs) && s.rs[idx].Key == key {
-			if s.rs[idx].Deleted {
-				return "", false, nil
-			}
-			return s.rs[idx].Val, true, nil
+			return s.rs[idx], true, nil
 		}
-		return "", false, nil
+		return Record{}, false, nil
 	}
 
 	entry, ok := s.findIndexEntry(key)
 	if !ok {
-		return "", false, nil
+		return Record{}, false, nil
 	}
 	blockData, err := readBlock(s.file, entry.Handle)
 	if err != nil {
-		return "", false, err
+		return Record{}, false, err
 	}
 	records, err := DecodeDataBlock(blockData)
 	if err != nil {
-		return "", false, err
+		return Record{}, false, err
 	}
 	idx := sort.Search(len(records), func(i int) bool {
 		return records[i].Key >= key
 	})
 	if idx < len(records) && records[idx].Key == key {
-		if records[idx].Deleted {
-			return "", false, nil
-		}
-		return records[idx].Val, true, nil
+		return records[idx], true, nil
 	}
-	return "", false, nil
+	return Record{}, false, nil
 }
 
 // Contains 判断 key 是否存在于当前 SSTable。

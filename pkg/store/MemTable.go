@@ -62,11 +62,17 @@ func NewMemTable(limit int) *MemTable {
 // Get 根据 key 查询 value。
 // 如果 key 对应的是墓碑，返回 ok=false。
 func (mt *MemTable) Get(key string) (string, bool) {
-	value, ok := mt.table.Get(key)
+	value, ok := mt.GetEntry(key)
 	if !ok || value.Deleted {
 		return "", false
 	}
 	return value.Value, true
+}
+
+// GetEntry 返回 MemTable 中的原始记录。
+// 调用方可以通过 Deleted 判断这条记录是否是墓碑。
+func (mt *MemTable) GetEntry(key string) (MemValue, bool) {
+	return mt.table.Get(key)
 }
 
 // Put 插入或更新 key/value。
