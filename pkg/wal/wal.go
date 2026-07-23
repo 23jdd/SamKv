@@ -20,7 +20,7 @@ type WalWriter struct {
 	file *os.File
 }
 type WalManger struct {
-	dir          string
+	Dir          string
 	buffer       []byte
 	flushBatch   []byte
 	activeWriter *WalWriter
@@ -45,7 +45,7 @@ func New(dir string) (*WalManger, error) {
 	wm.activeWriter = w
 	wm.buffer = make([]byte, 0, DefaultSize)
 	wm.flushBatch = make([]byte, 0, DefaultSize)
-	wm.dir = dir
+	wm.Dir = dir
 	wm.flushCond = *sync.NewCond(&wm.bufmu)
 	go wm.Background()
 	return wm, nil
@@ -63,35 +63,41 @@ func (wm *WalManger) AppendLog(data []byte) error {
 	wm.buffer = append(wm.buffer, data...)
 	return nil
 }
-func (wm*WalManger)triggerFlush(){
-	  wm.bufmu.Lock()
-      if len(wm.buffer)==0{
-            wm.bufmu.Unlock()
-            return 
-      }				
-      batch:=wm.flushBatch
-      wm.flushBatch=wm.buffer
-      wm.buffer=batch[:0]
-      wm.flushCond.Broadcast()
-      wm.bufmu.Unlock()
-      _,err:=wm.activeWriter.file.Write(wm.flushBatch)
-      if err==nil{  
-            err=wm.activeWriter.file.Sync()
-      }
-      if err!=nil{
-            log.Println("[WAL] Error",err)
-      }
-      fmt.Println("Sync")
-       		
+func (wm *WalManger) triggerFlush() {
+	wm.bufmu.Lock()
+	if len(wm.buffer) == 0 {
+		wm.bufmu.Unlock()
+		return
+	}
+	batch := wm.flushBatch
+	wm.flushBatch = wm.buffer
+	wm.buffer = batch[:0]
+	wm.flushCond.Broadcast()
+	wm.bufmu.Unlock()
+	_, err := wm.activeWriter.file.Write(wm.flushBatch)
+	if err == nil {
+		err = wm.activeWriter.file.Sync()
+	}
+	if err != nil {
+		log.Println("[WAL] Error", err)
+	}
+	fmt.Println("Sync")
+
 }
+
 // flusher
 func (wm *WalManger) Background() {
 	ticker := time.NewTicker(FlushInterval)
-    for{
-        <-ticker.C
-        wm.triggerFlush() 
-    }
+	for {
+		<-ticker.C
+		wm.triggerFlush()
+	}
 }
-func (wm*WalManger)Flush(){
- 
+
+func (wm *WalManger) AppendRecord(r *Record) error {
+	data, err := r.Encode()
+	if err != nil {
+		return err
+	}
+	return wm.AppendLog(data)
 }

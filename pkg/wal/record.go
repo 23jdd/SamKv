@@ -32,7 +32,12 @@ type Record struct {
 	Key      []byte
 	Value    []byte
 }
-
+func PutRecord(key []byte,val []byte)*Record{
+	 return &Record{Type: RecordPut,Key:key,Value: val}
+}
+func DeleteRecord(key []byte)*Record{
+	 return &Record{Type: RecordDelete,Key:key}
+}
 func (r *Record) Encode() ([]byte, error) {
 	if len(r.Key) == 0 {
 		return nil, errors.New("empty key")
