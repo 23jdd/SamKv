@@ -10,36 +10,64 @@ import (
 	"sort"
 )
 
+// SSTable 文件布局：
+//
+//	[DataBlock 1][DataBlock 2]...[DataBlock N]
+//	[MetaBlock]
+//	[IndexBlock]
+//	[Footer]
+//
+// Footer 固定放在文件末尾，里面保存 MetaBlock 和 IndexBlock 的位置。
+// 打开文件时先读 Footer，再根据 Footer 定位索引和元数据。
 const (
-	Magic           = "SAMKVST1"
+	// Magic 用于识别当前文件是否是 SamKV 的 SSTable 文件。
+	Magic = "流萤"
+
+	// ReStartInterval 表示 DataBlock 前缀压缩时，每隔多少条记录写一个完整 key。
 	ReStartInterval = 16
 
 	sstableVersion       uint32 = 1
 	defaultDataBlockSize        = 4 * 1024
-	footerSize                  = 48
+	magicSize                   = len(Magic)
+	versionOffset               = magicSize
+	metaOffsetOffset            = versionOffset + 4
+	metaSizeOffset              = metaOffsetOffset + 8
+	indexOffsetOffset           = metaSizeOffset + 8
+	indexSizeOffset             = indexOffsetOffset + 8
+	footerSize                  = indexSizeOffset + 8
 )
 
 var (
+	// ErrSSTableNotFound 表示查询的 key 不在当前 SSTable 中。
 	ErrSSTableNotFound = errors.New("sstable: key not found")
-	ErrInvalidSSTable  = errors.New("sstable: invalid file")
+	// ErrInvalidSSTable 表示 SSTable 文件格式非法或内容被截断。
+	ErrInvalidSSTable = errors.New("sstable: invalid file")
 )
 
+// Record 是 SSTable 中最小的 key/value 记录。
+// 写入前会按 Key 排序，同一个 Key 多次出现时保留最后一次写入的值。
 type Record struct {
 	Key string
 	Val string
 }
 
+// BlockHandle 描述一个 block 在 SSTable 文件中的物理位置。
+// Offset 是相对文件起始位置的偏移量，Size 是 block 字节长度。
 type BlockHandle struct {
 	Offset uint64
 	Size   uint64
 }
 
+// IndexEntry 是 IndexBlock 中的一条索引。
+// 它记录一个 DataBlock 的 key 范围，以及这个 DataBlock 的文件位置。
 type IndexEntry struct {
 	FirstKey string
 	LastKey  string
 	Handle   BlockHandle
 }
 
+// MetaBlock 保存整张 SSTable 的元数据。
+// 当前包含 key 范围、记录数量和 BloomFilter，后续可以扩展时间范围等信息。
 type MetaBlock struct {
 	RecordCount uint64
 	MinKey      string
@@ -47,11 +75,15 @@ type MetaBlock struct {
 	Filter      *BloomFilter
 }
 
+// Footer 固定大小，永远写在 SSTable 文件末尾。
+// 打开文件时先读取 Footer，再找到 MetaBlock 和 IndexBlock。
 type Footer struct {
 	MetaHandle  BlockHandle
 	IndexHandle BlockHandle
 }
 
+// SStable 表示一张不可变的 Sorted String Table。
+// 内存构建时 rs 保存排序后的记录；从磁盘打开时主要依赖 file、index 和 meta 查询。
 type SStable struct {
 	path   string
 	file   *os.File
@@ -62,6 +94,8 @@ type SStable struct {
 	footer Footer
 }
 
+// NewSStable 在内存中创建一张 SSTable 描述对象。
+// 它不会写磁盘，主要用于测试或构建阶段查看排序记录和 BloomFilter。
 func NewSStable(rs []Record) (*SStable, error) {
 	records := normalizeRecords(rs)
 	bf, err := buildBloomFilter(records)
@@ -81,6 +115,8 @@ func NewSStable(rs []Record) (*SStable, error) {
 	return s, nil
 }
 
+// WriteSStable 将 records 写成一个完整的 SSTable 文件。
+// 写入顺序是 DataBlocks -> MetaBlock -> IndexBlock -> Footer。
 func WriteSStable(path string, rs []Record) (*SStable, error) {
 	records := normalizeRecords(rs)
 	bf, err := buildBloomFilter(records)
@@ -169,6 +205,8 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 	}, nil
 }
 
+// OpenSStable 打开磁盘上的 SSTable 文件。
+// 它只加载 Footer、MetaBlock 和 IndexBlock，DataBlock 会在查询时按需读取。
 func OpenSStable(path string) (*SStable, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -186,12 +224,12 @@ func OpenSStable(path string) (*SStable, error) {
 	if err != nil {
 		return nil, err
 	}
-	if stat.Size() < footerSize {
+	if stat.Size() < int64(footerSize) {
 		return nil, ErrInvalidSSTable
 	}
 
 	footerData := make([]byte, footerSize)
-	if _, err := file.ReadAt(footerData, stat.Size()-footerSize); err != nil {
+	if _, err := file.ReadAt(footerData, stat.Size()-int64(footerSize)); err != nil {
 		return nil, err
 	}
 	footer, err := decodeFooter(footerData)
@@ -228,6 +266,7 @@ func OpenSStable(path string) (*SStable, error) {
 	}, nil
 }
 
+// Close 关闭 SSTable 持有的文件句柄。
 func (s *SStable) Close() error {
 	if s == nil || s.file == nil {
 		return nil
@@ -237,6 +276,8 @@ func (s *SStable) Close() error {
 	return err
 }
 
+// Get 查询 key 对应的 value。
+// 查询流程：BloomFilter 快速排除 -> IndexBlock 定位 DataBlock -> 解码 DataBlock 后二分查找。
 func (s *SStable) Get(key string) (string, bool, error) {
 	if s == nil {
 		return "", false, ErrInvalidSSTable
@@ -276,21 +317,25 @@ func (s *SStable) Get(key string) (string, bool, error) {
 	return "", false, nil
 }
 
+// Contains 判断 key 是否存在于当前 SSTable。
 func (s *SStable) Contains(key string) (bool, error) {
 	_, ok, err := s.Get(key)
 	return ok, err
 }
 
+// Meta 返回 SSTable 的元数据快照。
 func (s *SStable) Meta() MetaBlock {
 	return s.meta
 }
 
+// Index 返回索引项副本，避免调用方修改内部索引。
 func (s *SStable) Index() []IndexEntry {
 	index := make([]IndexEntry, len(s.index))
 	copy(index, s.index)
 	return index
 }
 
+// findIndexEntry 根据 key 在 IndexBlock 中找到可能包含它的 DataBlock。
 func (s *SStable) findIndexEntry(key string) (IndexEntry, bool) {
 	idx := sort.Search(len(s.index), func(i int) bool {
 		return s.index[i].LastKey >= key
@@ -305,6 +350,9 @@ func (s *SStable) findIndexEntry(key string) (IndexEntry, bool) {
 	return entry, true
 }
 
+// EncodeDataBlock 编码一个 DataBlock。
+// 单条记录格式：sharedKeyLen、nonSharedKeyLen、valueLen、keySuffix、value。
+// block 末尾写 restart offsets 和 restart count，用于之后支持块内快速查找。
 func EncodeDataBlock(rs []Record) ([]byte, error) {
 	var buf bytes.Buffer
 	restarts := make([]uint32, 0, (len(rs)/ReStartInterval)+1)
@@ -355,6 +403,7 @@ func EncodeDataBlock(rs []Record) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// DecodeDataBlock 解码一个 DataBlock，并还原前缀压缩过的完整 key。
 func DecodeDataBlock(data []byte) ([]Record, error) {
 	if len(data) < 4 {
 		return nil, ErrInvalidSSTable
@@ -404,13 +453,14 @@ func DecodeDataBlock(data []byte) ([]Record, error) {
 	return records, nil
 }
 
-// DecodeRcWithTrie keeps the old helper name, but it actually encodes records
-// with prefix compression and restart points.
+// DecodeRcWithTrie 保留旧函数名以兼容已有调用。
+// 实际行为是把记录编码成带前缀压缩和 restart point 的 DataBlock。
 func DecodeRcWithTrie(rs []Record) []byte {
 	data, _ := EncodeDataBlock(rs)
 	return data
 }
 
+// SharedLen 返回两个 key 从头开始相同的字节数。
 func SharedLen(target []byte, source []byte) int {
 	ml := min(len(target), len(source))
 	for i := 0; i < ml; i++ {
@@ -421,6 +471,8 @@ func SharedLen(target []byte, source []byte) int {
 	return ml
 }
 
+// normalizeRecords 对记录按 key 排序，并合并重复 key。
+// 重复 key 保留排序后遇到的最后一条记录，符合后写覆盖前写的语义。
 func normalizeRecords(rs []Record) []Record {
 	records := make([]Record, len(rs))
 	copy(records, rs)
@@ -439,6 +491,7 @@ func normalizeRecords(rs []Record) []Record {
 	return out
 }
 
+// buildBloomFilter 使用 store 包已有 BloomFilter，为当前 SSTable 的所有 key 建过滤器。
 func buildBloomFilter(records []Record) (*BloomFilter, error) {
 	if len(records) == 0 {
 		return NewBloomFilterWithSize(64, 4)
@@ -453,6 +506,8 @@ func buildBloomFilter(records []Record) (*BloomFilter, error) {
 	return bf, nil
 }
 
+// splitDataBlocks 按目标字节大小把有序记录切成多个 DataBlock。
+// 单条记录超过目标大小时仍会单独形成一个 block。
 func splitDataBlocks(records []Record, targetSize int) [][]Record {
 	if len(records) == 0 {
 		return nil
@@ -475,6 +530,8 @@ func splitDataBlocks(records []Record, targetSize int) [][]Record {
 	return blocks
 }
 
+// encodeMetaBlock 编码 MetaBlock。
+// BloomFilter 直接复用 bloomfilter.go 中的 MarshalBinary 格式。
 func encodeMetaBlock(meta MetaBlock) ([]byte, error) {
 	if meta.Filter == nil {
 		return nil, errors.New("sstable: missing bloom filter")
@@ -514,6 +571,7 @@ func encodeMetaBlock(meta MetaBlock) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// decodeMetaBlock 解码 MetaBlock，并恢复 BloomFilter。
 func decodeMetaBlock(data []byte) (MetaBlock, error) {
 	if len(data) < 24 {
 		return MetaBlock{}, ErrInvalidSSTable
@@ -553,6 +611,8 @@ func decodeMetaBlock(data []byte) (MetaBlock, error) {
 	return MetaBlock{RecordCount: recordCount, MinKey: minKey, MaxKey: maxKey, Filter: &filter}, nil
 }
 
+// encodeIndexBlock 编码 IndexBlock。
+// IndexBlock 保存每个 DataBlock 的 key 范围和 BlockHandle。
 func encodeIndexBlock(index []IndexEntry) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := writeUint32(&buf, uint32(len(index))); err != nil {
@@ -583,6 +643,7 @@ func encodeIndexBlock(index []IndexEntry) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// decodeIndexBlock 解码 IndexBlock。
 func decodeIndexBlock(data []byte) ([]IndexEntry, error) {
 	if len(data) < 4 {
 		return nil, ErrInvalidSSTable
@@ -625,40 +686,43 @@ func decodeIndexBlock(data []byte) ([]IndexEntry, error) {
 	return index, nil
 }
 
+// encodeFooter 编码固定大小 Footer。
 func encodeFooter(footer Footer) []byte {
 	data := make([]byte, footerSize)
-	copy(data[0:8], []byte(Magic))
-	binary.LittleEndian.PutUint32(data[8:], sstableVersion)
-	binary.LittleEndian.PutUint64(data[16:], footer.MetaHandle.Offset)
-	binary.LittleEndian.PutUint64(data[24:], footer.MetaHandle.Size)
-	binary.LittleEndian.PutUint64(data[32:], footer.IndexHandle.Offset)
-	binary.LittleEndian.PutUint64(data[40:], footer.IndexHandle.Size)
+	copy(data[:magicSize], []byte(Magic))
+	binary.LittleEndian.PutUint32(data[versionOffset:], sstableVersion)
+	binary.LittleEndian.PutUint64(data[metaOffsetOffset:], footer.MetaHandle.Offset)
+	binary.LittleEndian.PutUint64(data[metaSizeOffset:], footer.MetaHandle.Size)
+	binary.LittleEndian.PutUint64(data[indexOffsetOffset:], footer.IndexHandle.Offset)
+	binary.LittleEndian.PutUint64(data[indexSizeOffset:], footer.IndexHandle.Size)
 	return data
 }
 
+// decodeFooter 解码 Footer，并校验 magic 和版本号。
 func decodeFooter(data []byte) (Footer, error) {
 	if len(data) != footerSize {
 		return Footer{}, ErrInvalidSSTable
 	}
-	if string(data[0:8]) != Magic {
+	if string(data[:magicSize]) != Magic {
 		return Footer{}, fmt.Errorf("%w: bad magic", ErrInvalidSSTable)
 	}
-	version := binary.LittleEndian.Uint32(data[8:])
+	version := binary.LittleEndian.Uint32(data[versionOffset:])
 	if version != sstableVersion {
 		return Footer{}, fmt.Errorf("%w: unsupported version %d", ErrInvalidSSTable, version)
 	}
 	return Footer{
 		MetaHandle: BlockHandle{
-			Offset: binary.LittleEndian.Uint64(data[16:]),
-			Size:   binary.LittleEndian.Uint64(data[24:]),
+			Offset: binary.LittleEndian.Uint64(data[metaOffsetOffset:]),
+			Size:   binary.LittleEndian.Uint64(data[metaSizeOffset:]),
 		},
 		IndexHandle: BlockHandle{
-			Offset: binary.LittleEndian.Uint64(data[32:]),
-			Size:   binary.LittleEndian.Uint64(data[40:]),
+			Offset: binary.LittleEndian.Uint64(data[indexOffsetOffset:]),
+			Size:   binary.LittleEndian.Uint64(data[indexSizeOffset:]),
 		},
 	}, nil
 }
 
+// readBlock 根据 BlockHandle 从文件中读取完整 block。
 func readBlock(file *os.File, handle BlockHandle) ([]byte, error) {
 	if handle.Size > uint64(int(^uint(0)>>1)) {
 		return nil, errors.New("sstable: block too large")
@@ -674,6 +738,7 @@ func readBlock(file *os.File, handle BlockHandle) ([]byte, error) {
 	return data, nil
 }
 
+// writeAll 保证 data 被完整写入，避免短写被当作成功。
 func writeAll(w io.Writer, data []byte) error {
 	for len(data) > 0 {
 		n, err := w.Write(data)
@@ -688,6 +753,7 @@ func writeAll(w io.Writer, data []byte) error {
 	return nil
 }
 
+// writeUint32 以小端序写入 uint32。
 func writeUint32(w io.Writer, v uint32) error {
 	var buf [4]byte
 	binary.LittleEndian.PutUint32(buf[:], v)
@@ -695,6 +761,7 @@ func writeUint32(w io.Writer, v uint32) error {
 	return err
 }
 
+// writeUint64 以小端序写入 uint64。
 func writeUint64(w io.Writer, v uint64) error {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], v)
