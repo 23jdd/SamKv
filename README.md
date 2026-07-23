@@ -117,20 +117,23 @@ curl http://127.0.0.1:9999/healthz
 
 ## CLI
 
-`cli` 目录提供一个无额外依赖的 HTTP 客户端：
-
+`samctl` 目录提供一个无额外依赖的 HTTP 客户端：
+## Install  
 ```bash
-go run ./cli put app/config enabled
-go run ./cli get app/config
-go run ./cli del app/config
-go run ./cli health
+go install ./samctl
+```
+```bash
+samctl put app/config enabled
+samctl get app/config
+samctl  del app/config
+samctl health
 ```
 
 也可以使用参数模式，并通过 `-a`、`-p`、`-timeout` 指定服务：
 
 ```bash
-go run ./cli -m put -k app/config -v enabled -a 127.0.0.1 -p 9999
-go run ./cli get -a 127.0.0.1 -p 9999 app/config
+samctl -m put -k app/config -v enabled -a 127.0.0.1 -p 9999
+samctl get -a 127.0.0.1 -p 9999 app/config
 ```
 
 `get` 只向标准输出写 value，`put`、`del` 成功输出 `ok`，便于在脚本中使用。
