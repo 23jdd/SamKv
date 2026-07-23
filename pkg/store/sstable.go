@@ -71,10 +71,15 @@ type IndexEntry struct {
 // MetaBlock 保存整张 SSTable 的元数据。
 // 当前包含 key 范围、记录数量和 BloomFilter，后续可以扩展时间范围等信息。
 type MetaBlock struct {
-	RecordCount uint64
-	MinKey      string
-	MaxKey      string
-	Filter      *BloomFilter
+	RecordCount      uint64
+	MinKey           string
+	MaxKey           string
+	Filter           *BloomFilter
+	HasTimeRange     bool
+	MinTimestamp     int64
+	MaxTimestamp     int64
+	LabelFilter      *BloomFilter
+	LabelCardinality map[string]uint64
 }
 
 // Footer 固定大小，永远写在 SSTable 文件末尾。
@@ -105,16 +110,11 @@ func NewSStable(rs []Record) (*SStable, error) {
 		return nil, err
 	}
 
-	s := &SStable{rs: records, bf: bf}
-	if len(records) > 0 {
-		s.meta = MetaBlock{
-			RecordCount: uint64(len(records)),
-			MinKey:      records[0].Key,
-			MaxKey:      records[len(records)-1].Key,
-			Filter:      bf,
-		}
+	meta, err := buildSSTableMeta(records, bf)
+	if err != nil {
+		return nil, err
 	}
-	return s, nil
+	return &SStable{rs: records, bf: bf, meta: meta}, nil
 }
 
 // WriteSStable 将 records 写成一个完整的 SSTable 文件。
@@ -164,10 +164,9 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 		offset += uint64(len(blockData))
 	}
 
-	meta := MetaBlock{RecordCount: uint64(len(records)), Filter: bf}
-	if len(records) > 0 {
-		meta.MinKey = records[0].Key
-		meta.MaxKey = records[len(records)-1].Key
+	meta, err := buildSSTableMeta(records, bf)
+	if err != nil {
+		return nil, err
 	}
 	metaData, err := encodeMetaBlock(meta)
 	if err != nil {
@@ -355,7 +354,14 @@ func (s *SStable) Contains(key string) (bool, error) {
 
 // Meta 返回 SSTable 的元数据快照。
 func (s *SStable) Meta() MetaBlock {
-	return s.meta
+	meta := s.meta
+	if s.meta.LabelCardinality != nil {
+		meta.LabelCardinality = make(map[string]uint64, len(s.meta.LabelCardinality))
+		for name, cardinality := range s.meta.LabelCardinality {
+			meta.LabelCardinality[name] = cardinality
+		}
+	}
+	return meta
 }
 
 // Index 返回索引项副本，避免调用方修改内部索引。
@@ -586,6 +592,10 @@ func encodeMetaBlock(meta MetaBlock) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	extensionData, err := encodeMetaExtension(meta)
+	if err != nil {
+		return nil, err
+	}
 
 	minKey := []byte(meta.MinKey)
 	maxKey := []byte(meta.MaxKey)
@@ -602,7 +612,7 @@ func encodeMetaBlock(meta MetaBlock) ([]byte, error) {
 	if err := writeUint32(&buf, uint32(len(filterData))); err != nil {
 		return nil, err
 	}
-	if err := writeUint32(&buf, 0); err != nil {
+	if err := writeUint32(&buf, uint32(len(extensionData))); err != nil {
 		return nil, err
 	}
 	if _, err := buf.Write(minKey); err != nil {
@@ -612,6 +622,9 @@ func encodeMetaBlock(meta MetaBlock) ([]byte, error) {
 		return nil, err
 	}
 	if _, err := buf.Write(filterData); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write(extensionData); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -631,30 +644,46 @@ func decodeMetaBlock(data []byte) (MetaBlock, error) {
 	offset += 4
 	filterLen := int(binary.LittleEndian.Uint32(data[offset:]))
 	offset += 4
+	extensionLen := int(binary.LittleEndian.Uint32(data[offset:]))
 	offset += 4
 
-	if minKeyLen < 0 || maxKeyLen < 0 || filterLen < 0 {
+	if minKeyLen < 0 || maxKeyLen < 0 || filterLen < 0 || extensionLen < 0 {
 		return MetaBlock{}, ErrInvalidSSTable
 	}
-	if minKeyLen > len(data)-offset || maxKeyLen > len(data)-offset-minKeyLen || filterLen > len(data)-offset-minKeyLen-maxKeyLen {
+	if minKeyLen > len(data)-offset {
 		return MetaBlock{}, ErrInvalidSSTable
 	}
-
 	minKey := string(data[offset : offset+minKeyLen])
 	offset += minKeyLen
+	if maxKeyLen > len(data)-offset {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
 	maxKey := string(data[offset : offset+maxKeyLen])
 	offset += maxKeyLen
+	if filterLen > len(data)-offset {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
 
 	var filter BloomFilter
 	if err := filter.UnmarshalBinary(data[offset : offset+filterLen]); err != nil {
 		return MetaBlock{}, err
 	}
 	offset += filterLen
-	if offset != len(data) {
+	if extensionLen > len(data)-offset {
 		return MetaBlock{}, ErrInvalidSSTable
 	}
 
-	return MetaBlock{RecordCount: recordCount, MinKey: minKey, MaxKey: maxKey, Filter: &filter}, nil
+	meta := MetaBlock{RecordCount: recordCount, MinKey: minKey, MaxKey: maxKey, Filter: &filter}
+	if extensionLen > 0 {
+		if err := decodeMetaExtension(data[offset:offset+extensionLen], &meta); err != nil {
+			return MetaBlock{}, err
+		}
+	}
+	offset += extensionLen
+	if offset != len(data) {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
+	return meta, nil
 }
 
 // encodeIndexBlock 编码 IndexBlock。

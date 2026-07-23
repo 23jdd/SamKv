@@ -14,18 +14,23 @@ const manifestFileName = "MANIFEST"
 // Manifest 记录当前 Store 认可的 SSTable 列表和下一个文件编号。
 // WAL 负责恢复尚未 checkpoint 的数据，Manifest 负责恢复已经落盘成 SSTable 的数据。
 type Manifest struct {
-	NextFileID uint64            `json:"next_file_id"`
-	SSTables   []ManifestSSTable `json:"sstables"`
+	NextFileID   uint64            `json:"next_file_id"`
+	LastSequence uint64            `json:"last_sequence"`
+	SSTables     []ManifestSSTable `json:"sstables"`
 }
 
 // ManifestSSTable 是 Manifest 中的一条 SSTable 元数据。
 // Level 预留给后续 compaction 分层使用；新写入文件从 L0 开始。
 type ManifestSSTable struct {
-	File        string `json:"file"`
-	Level       int    `json:"level"`
-	MinKey      string `json:"min_key"`
-	MaxKey      string `json:"max_key"`
-	RecordCount uint64 `json:"record_count"`
+	File             string            `json:"file"`
+	Level            int               `json:"level"`
+	MinKey           string            `json:"min_key"`
+	MaxKey           string            `json:"max_key"`
+	RecordCount      uint64            `json:"record_count"`
+	HasTimeRange     bool              `json:"has_time_range,omitempty"`
+	MinTimestamp     int64             `json:"min_timestamp,omitempty"`
+	MaxTimestamp     int64             `json:"max_timestamp,omitempty"`
+	LabelCardinality map[string]uint64 `json:"label_cardinality,omitempty"`
 }
 
 func newManifest() Manifest {
@@ -166,10 +171,14 @@ func saveManifest(dir string, manifest Manifest) error {
 func manifestEntryFromSSTable(path string, table *SStable) ManifestSSTable {
 	meta := table.Meta()
 	return ManifestSSTable{
-		File:        filepath.Base(path),
-		Level:       0,
-		MinKey:      meta.MinKey,
-		MaxKey:      meta.MaxKey,
-		RecordCount: meta.RecordCount,
+		File:             filepath.Base(path),
+		Level:            0,
+		MinKey:           meta.MinKey,
+		MaxKey:           meta.MaxKey,
+		RecordCount:      meta.RecordCount,
+		HasTimeRange:     meta.HasTimeRange,
+		MinTimestamp:     meta.MinTimestamp,
+		MaxTimestamp:     meta.MaxTimestamp,
+		LabelCardinality: meta.LabelCardinality,
 	}
 }

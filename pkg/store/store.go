@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/23jdd/SamKv/pkg/wal"
 )
@@ -25,6 +26,7 @@ type StoreManger struct {
 	sstables      []*SStable
 	nextSSTableID uint64
 	manifest      Manifest
+	sequence      atomic.Uint64
 }
 
 // NewStoreManger 创建 Store，加载 Manifest/SSTable，并自动回放尚未 checkpoint 的 WAL。
@@ -47,6 +49,12 @@ func NewStoreManger(dir string, limit int) (*StoreManger, error) {
 		return nil, err
 	}
 	if err := RecoverWALFile(filepath.Join(dir, "wal.log"), st.mem); err != nil {
+		st.closeSSTables()
+		_ = wm.Close()
+		return nil, err
+	}
+	st.sequence.Store(st.manifest.LastSequence)
+	if err := st.restoreSequence(); err != nil {
 		st.closeSSTables()
 		_ = wm.Close()
 		return nil, err
@@ -147,6 +155,7 @@ func (st *StoreManger) checkpointLocked() (string, error) {
 		nextManifest.SSTables = append([]ManifestSSTable(nil), st.manifest.SSTables...)
 		nextManifest.SSTables = append(nextManifest.SSTables, manifestEntryFromSSTable(path, table))
 		nextManifest.NextFileID = st.nextSSTableID + 1
+		nextManifest.LastSequence = st.sequence.Load()
 		if err := saveManifest(st.dir, nextManifest); err != nil {
 			_ = table.Close()
 			_ = os.Remove(path)
