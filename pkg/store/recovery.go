@@ -1,10 +1,12 @@
 package store
 
 import (
-	"io"
-	"github.com/23jdd/SamKv/pkg/wal"
 	"errors"
+	"io"
+
+	"github.com/23jdd/SamKv/pkg/wal"
 )
+
 func Recover(r io.Reader, mem *MemTable) error {
 	for {
 		record, err := wal.ReadRecord(r)
@@ -25,10 +27,14 @@ func Recover(r io.Reader, mem *MemTable) error {
 
 		switch record.Type {
 		case wal.RecordPut:
-			mem.Put(string(record.Key), string(record.Value))
+			if err := mem.Put(string(record.Key), string(record.Value)); err != nil {
+				return err
+			}
 
 		case wal.RecordDelete:
-			mem.Delete(string(record.Key))
+			if err := mem.Delete(string(record.Key)); err != nil {
+				return err
+			}
 		}
 	}
 }

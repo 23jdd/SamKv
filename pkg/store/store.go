@@ -21,24 +21,23 @@ func NewStoreManger(dir string, limit int) (*StoreManger, error) {
 }
 
 func (st *StoreManger) Put(key string, val string) error {
-	err := st.wm.AppendRecord(wal.PutRecord([]byte(key), []byte(val)))
-	if err != nil {
+	if err := st.wm.AppendRecord(wal.PutRecord([]byte(key), []byte(val))); err != nil {
 		return err
 	}
-	st.mem.Put(key, val)
-	return nil
+	return st.mem.Put(key, val)
 }
+
 func (st *StoreManger) Get(key string) (string, bool) {
 	return st.mem.Get(key)
 }
+
 func (st *StoreManger) Delete(key string) error {
-	err := st.wm.AppendRecord(wal.DeleteRecord([]byte(key)))
-	if err != nil {
+	if err := st.wm.AppendRecord(wal.DeleteRecord([]byte(key))); err != nil {
 		return err
 	}
-	st.mem.Delete(key)
-	return nil
+	return st.mem.Delete(key)
 }
+
 func (st *StoreManger) ReLoad() {
 	path := filepath.Join(st.wm.Dir, "wal.log")
 	reader, err := os.Open(path)
@@ -46,5 +45,5 @@ func (st *StoreManger) ReLoad() {
 		panic(err)
 	}
 	defer reader.Close()
-	Recover(reader,st.mem)
+	_ = Recover(reader, st.mem)
 }
