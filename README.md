@@ -1,4 +1,4 @@
-# SamKV
+# SamKv
 
 SamKV 是一个面向日志场景的单机 LSM-Tree KV 存储引擎。它已经实现从 WAL、MemTable、Immutable MemTable 到 SSTable、Manifest、范围查询和 Compaction 的完整本地持久化链路。
 
