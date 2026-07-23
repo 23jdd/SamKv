@@ -36,7 +36,7 @@ func New(dir string) (*WalManger, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, "wal.log")
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDONLY, 0644)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, err
 	}
