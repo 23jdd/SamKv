@@ -33,6 +33,7 @@ func (s *SStable) Scan(startKey, endKey string) ([]Record, error) {
 			return nil, err
 		}
 		blockRecords, err := DecodeDataBlock(blockData)
+		releaseBlock(blockData)
 		if err != nil {
 			return nil, err
 		}

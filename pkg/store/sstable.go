@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	bufferpool "github.com/23jdd/SamKv/pkg/pool"
 )
 
 // SSTable 文件布局：
@@ -43,6 +45,15 @@ var (
 	ErrSSTableNotFound = errors.New("sstable: key not found")
 	// ErrInvalidSSTable 表示 SSTable 文件格式非法或内容被截断。
 	ErrInvalidSSTable = errors.New("sstable: invalid file")
+)
+
+// sstableBlockBufferPool 复用 SSTable 读取缓冲；超出最大桶的超大 Block 不进入池。
+var sstableBlockBufferPool = bufferpool.NewTieredPool(
+	defaultDataBlockSize,
+	16*1024,
+	64*1024,
+	256*1024,
+	1024*1024,
 )
 
 // Record 是 SSTable 中最小的 key/value 记录。
@@ -255,6 +266,7 @@ func OpenSStable(path string) (*SStable, error) {
 		return nil, err
 	}
 	meta, err := decodeMetaBlock(metaData)
+	releaseBlock(metaData)
 	if err != nil {
 		return nil, err
 	}
@@ -264,6 +276,7 @@ func OpenSStable(path string) (*SStable, error) {
 		return nil, err
 	}
 	index, err := decodeIndexBlock(indexData)
+	releaseBlock(indexData)
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +347,7 @@ func (s *SStable) GetRecord(key string) (Record, bool, error) {
 		return Record{}, false, err
 	}
 	records, err := DecodeDataBlock(blockData)
+	releaseBlock(blockData)
 	if err != nil {
 		return Record{}, false, err
 	}
@@ -820,19 +834,27 @@ func validateBlockHandle(handle BlockHandle, limit uint64) error {
 }
 
 // readBlock 根据 BlockHandle 从文件中读取完整 block。
+// 返回的缓冲来自分级池，调用方解码完成后必须调用 releaseBlock。
 func readBlock(file *os.File, handle BlockHandle) ([]byte, error) {
 	if handle.Size > uint64(int(^uint(0)>>1)) {
 		return nil, errors.New("sstable: block too large")
 	}
-	data := make([]byte, int(handle.Size))
+	data := sstableBlockBufferPool.Get(int(handle.Size))
 	n, err := file.ReadAt(data, int64(handle.Offset))
 	if err != nil && !errors.Is(err, io.EOF) {
+		sstableBlockBufferPool.Put(data)
 		return nil, err
 	}
 	if n != len(data) {
+		sstableBlockBufferPool.Put(data)
 		return nil, io.ErrUnexpectedEOF
 	}
 	return data, nil
+}
+
+// releaseBlock 归还只在解码期间使用的 SSTable Block 缓冲。
+func releaseBlock(data []byte) {
+	sstableBlockBufferPool.Put(data)
 }
 
 // writeAll 保证 data 被完整写入，避免短写被当作成功。

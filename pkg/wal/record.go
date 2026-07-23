@@ -1,11 +1,12 @@
 package wal
 
-
 import (
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
 	"io"
+
+	bufferpool "github.com/23jdd/SamKv/pkg/pool"
 )
 
 type RecordType uint8
@@ -26,17 +27,27 @@ var (
 	ErrRecordTooLarge = errors.New("wal record too large")
 )
 
+// walRecordBufferPool 复用 WAL 恢复读取缓冲；大于 1 MiB 的记录读取后直接释放。
+var walRecordBufferPool = bufferpool.NewTieredPool(
+	DefaultSize,
+	16*1024,
+	64*1024,
+	256*1024,
+	1024*1024,
+)
+
 type Record struct {
 	Type     RecordType
 	Sequence uint64
 	Key      []byte
 	Value    []byte
 }
-func PutRecord(key []byte,val []byte)*Record{
-	 return &Record{Type: RecordPut,Key:key,Value: val}
+
+func PutRecord(key []byte, val []byte) *Record {
+	return &Record{Type: RecordPut, Key: key, Value: val}
 }
-func DeleteRecord(key []byte)*Record{
-	 return &Record{Type: RecordDelete,Key:key}
+func DeleteRecord(key []byte) *Record {
+	return &Record{Type: RecordDelete, Key: key}
 }
 func (r *Record) Encode() ([]byte, error) {
 	if len(r.Key) == 0 {
@@ -180,31 +191,25 @@ func Decode(data []byte) (*Record, error) {
 	return record, nil
 }
 
+// ReadRecord 从流中读取并校验一条完整 WAL 记录。
 func ReadRecord(r io.Reader) (*Record, error) {
-	header := make([]byte, headerSize)
-
-	_, err := io.ReadFull(r, header)
-	if err != nil {
+	var header [headerSize]byte
+	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return nil, err
 	}
 
 	payloadLength := binary.LittleEndian.Uint32(header[4:8])
-
 	const maxRecordSize = 64 << 20 // 64 MiB
-
 	if payloadLength > maxRecordSize {
 		return nil, ErrRecordTooLarge
 	}
 
-	payload := make([]byte, payloadLength)
-
-	if _, err := io.ReadFull(r, payload); err != nil {
+	// Decode 会复制 key 和 value，因此函数返回前即可安全归还读取缓冲。
+	data := walRecordBufferPool.Get(headerSize + int(payloadLength))
+	defer walRecordBufferPool.Put(data)
+	copy(data[:headerSize], header[:])
+	if _, err := io.ReadFull(r, data[headerSize:]); err != nil {
 		return nil, err
 	}
-
-	data := make([]byte, 0, headerSize+len(payload))
-	data = append(data, header...)
-	data = append(data, payload...)
-
 	return Decode(data)
 }

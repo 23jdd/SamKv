@@ -79,3 +79,29 @@ func TestReplaceRewritesWALContents(t *testing.T) {
 		t.Fatalf("wal.log = %x, want %x", got, replacement)
 	}
 }
+
+func TestReadRecordCopiesDataBeforeReturningBuffer(t *testing.T) {
+	encoded, err := (&Record{
+		Type:     RecordPut,
+		Sequence: 42,
+		Key:      []byte("pooled-key"),
+		Value:    []byte("pooled-value"),
+	}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := ReadRecord(bytes.NewReader(encoded))
+	if err != nil {
+		t.Fatalf("ReadRecord() error = %v", err)
+	}
+
+	// 重新借出并覆盖刚归还的缓冲，验证 Decode 返回的数据没有引用池内存。
+	borrowed := walRecordBufferPool.Get(len(encoded))
+	clear(borrowed)
+	walRecordBufferPool.Put(borrowed)
+
+	if record.Sequence != 42 || string(record.Key) != "pooled-key" || string(record.Value) != "pooled-value" {
+		t.Fatalf("ReadRecord() returned data backed by the pooled buffer: %#v", record)
+	}
+}

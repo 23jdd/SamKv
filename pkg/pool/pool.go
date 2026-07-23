@@ -18,11 +18,20 @@ func NewTieredPool(capacities ...int) *TieredPool {
 	if len(capacities) == 0 {
 		panic("tiered buffer: capacities must not be empty")
 	}
-	tp := &TieredPool{
-		caps:  capacities,
-		pools: make([]sync.Pool, len(capacities)),
+	caps := append([]int(nil), capacities...)
+	for i, capacity := range caps {
+		if capacity <= 0 {
+			panic("tiered buffer: capacities must be positive")
+		}
+		if i > 0 && capacity <= caps[i-1] {
+			panic("tiered buffer: capacities must be strictly increasing")
+		}
 	}
-	for i, c := range capacities {
+	tp := &TieredPool{
+		caps:  caps,
+		pools: make([]sync.Pool, len(caps)),
+	}
+	for i, c := range caps {
 		c := c
 		tp.pools[i].New = func() any {
 			return make([]byte, 0, c)
@@ -36,12 +45,14 @@ func NewTieredPool(capacities ...int) *TieredPool {
 // The buffer is taken from the smallest pool whose capacity >= size.
 // If no pool is large enough, a new buffer is allocated without pooling.
 func (tp *TieredPool) Get(size int) []byte {
+	if size < 0 {
+		panic("tiered buffer: size must not be negative")
+	}
 	for i, c := range tp.caps {
 		if c >= size {
 			buf := tp.pools[i].Get().([]byte)
 			if cap(buf) < size {
-				// Should never happen under normal use, but be defensive.
-				tp.pools[i].Put(buf[:0])
+				// 防御外部错误归还的缓冲，不能再次放回并持续污染当前桶。
 				return make([]byte, size)
 			}
 			return buf[:size]
@@ -50,17 +61,17 @@ func (tp *TieredPool) Get(size int) []byte {
 	return make([]byte, size)
 }
 
-// Put 归还缓冲：按容量放回对应桶；超过最大桶容量则丢弃。
-// Put returns a buffer to the pool. The buffer's capacity determines which
-// pool it goes into: it's placed into the smallest pool whose capacity >= cap(buf).
-// If the capacity exceeds the largest pool's capacity, the buffer is discarded.
+// Put 归还缓冲：只有容量与某个桶完全匹配时才复用，其他缓冲直接丢弃。
+// 精确匹配可以保证桶内缓冲始终满足该桶的容量约束。
 func (tp *TieredPool) Put(buf []byte) {
 	c := cap(buf)
-	for i, capa := range tp.caps {
-		if c <= capa {
+	for i, capacity := range tp.caps {
+		if c == capacity {
 			tp.pools[i].Put(buf[:0])
 			return
 		}
+		if c < capacity {
+			return
+		}
 	}
-	// Discard: capacity too large.
 }
