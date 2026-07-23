@@ -45,5 +45,6 @@ func (st *StoreManger) ReLoad() {
 	if err != nil {
 		panic(err)
 	}
+	defer reader.Close()
 	Recover(reader,st.mem)
 }

@@ -1,7 +1,6 @@
 package wal
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -24,6 +23,7 @@ type WalManger struct {
 	buffer       []byte
 	flushBatch   []byte
 	activeWriter *WalWriter
+	writeMu      sync.Mutex
 	bufmu        sync.Mutex
 	flushCond    sync.Cond
 	closed       bool
@@ -52,6 +52,15 @@ func New(dir string) (*WalManger, error) {
 }
 
 func (wm *WalManger) AppendLog(data []byte) error {
+	if len(data) > cap(wm.buffer) {
+		wm.writeMu.Lock()
+		defer wm.writeMu.Unlock()
+
+		if err := wm.flushBufferLocked(); err != nil {
+			return err
+		}
+		return wm.writeAndSyncLocked(data)
+	}
 	wm.bufmu.Lock()
 	defer wm.bufmu.Unlock()
 	for len(wm.buffer)+len(data) > cap(wm.buffer) && !wm.closed {
@@ -63,26 +72,33 @@ func (wm *WalManger) AppendLog(data []byte) error {
 	wm.buffer = append(wm.buffer, data...)
 	return nil
 }
-func (wm *WalManger) triggerFlush() {
+func (wm *WalManger) triggerFlush() error {
+	wm.writeMu.Lock()
+	defer wm.writeMu.Unlock()
+
+	return wm.flushBufferLocked()
+}
+
+func (wm *WalManger) flushBufferLocked() error {
 	wm.bufmu.Lock()
 	if len(wm.buffer) == 0 {
 		wm.bufmu.Unlock()
-		return
+		return nil
 	}
 	batch := wm.flushBatch
 	wm.flushBatch = wm.buffer
 	wm.buffer = batch[:0]
 	wm.flushCond.Broadcast()
 	wm.bufmu.Unlock()
-	_, err := wm.activeWriter.file.Write(wm.flushBatch)
-	if err == nil {
-		err = wm.activeWriter.file.Sync()
-	}
-	if err != nil {
-		log.Println("[WAL] Error", err)
-	}
-	fmt.Println("Sync")
 
+	return wm.writeAndSyncLocked(wm.flushBatch)
+}
+
+func (wm *WalManger) writeAndSyncLocked(data []byte) error {
+	if _, err := wm.activeWriter.file.Write(data); err != nil {
+		return err
+	}
+	return wm.activeWriter.file.Sync()
 }
 
 // flusher
@@ -90,7 +106,9 @@ func (wm *WalManger) Background() {
 	ticker := time.NewTicker(FlushInterval)
 	for {
 		<-ticker.C
-		wm.triggerFlush()
+		if err := wm.triggerFlush(); err != nil {
+			log.Println("[WAL] Error", err)
+		}
 	}
 }
 

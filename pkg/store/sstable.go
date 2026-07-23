@@ -28,13 +28,7 @@ func NewSStable(rs []Record) (*SStable, error) {
 
 // [shared key] [key] [deta_len] [key delate] [data]
 func DecodeRcWithTrie(rs []Record) []byte {
-	if len(rs) == 0 {
-		return nil
-	}
-	p := ""
-	for _, v := range rs {
-
-	}
+   return nil
 }
 func SharedLen(target []byte, source []byte) int {
 	ml := min(len(target), len(source))
