@@ -8,11 +8,6 @@ import (
 
 func main() {
 
-	st, err := store.NewStoreManger("logs", 10)
-	if err != nil {
-		panic(err)
-	}
-	st.ReLoad()
-	val,_:= st.Get("hello")	
-	fmt.Println(val)
+     m := store.Magic
+     fmt.Println([]byte(m))
 }
