@@ -45,10 +45,11 @@ var (
 )
 
 // Record 是 SSTable 中最小的 key/value 记录。
-// 写入前会按 Key 排序，同一个 Key 多次出现时保留最后一次写入的值。
+// Deleted=true 表示墓碑记录：该 key 已被删除，用来覆盖旧 SSTable 中的旧值。
 type Record struct {
-	Key string
-	Val string
+	Key     string
+	Val     string
+	Deleted bool
 }
 
 // BlockHandle 描述一个 block 在 SSTable 文件中的物理位置。
@@ -291,6 +292,9 @@ func (s *SStable) Get(key string) (string, bool, error) {
 			return s.rs[i].Key >= key
 		})
 		if idx < len(s.rs) && s.rs[idx].Key == key {
+			if s.rs[idx].Deleted {
+				return "", false, nil
+			}
 			return s.rs[idx].Val, true, nil
 		}
 		return "", false, nil
@@ -312,6 +316,9 @@ func (s *SStable) Get(key string) (string, bool, error) {
 		return records[i].Key >= key
 	})
 	if idx < len(records) && records[idx].Key == key {
+		if records[idx].Deleted {
+			return "", false, nil
+		}
 		return records[idx].Val, true, nil
 	}
 	return "", false, nil
@@ -351,7 +358,7 @@ func (s *SStable) findIndexEntry(key string) (IndexEntry, bool) {
 }
 
 // EncodeDataBlock 编码一个 DataBlock。
-// 单条记录格式：sharedKeyLen、nonSharedKeyLen、valueLen、keySuffix、value。
+// 单条记录格式：sharedKeyLen、nonSharedKeyLen、valueLen、flags、keySuffix、value。
 // block 末尾写 restart offsets 和 restart count，用于之后支持块内快速查找。
 func EncodeDataBlock(rs []Record) ([]byte, error) {
 	var buf bytes.Buffer
@@ -380,6 +387,13 @@ func EncodeDataBlock(rs []Record) ([]byte, error) {
 			return nil, err
 		}
 		if err := writeUint32(&buf, uint32(len(value))); err != nil {
+			return nil, err
+		}
+		flags := byte(0)
+		if record.Deleted {
+			flags = 1
+		}
+		if err := buf.WriteByte(flags); err != nil {
 			return nil, err
 		}
 		if _, err := buf.Write(key[shared:]); err != nil {
@@ -419,7 +433,7 @@ func DecodeDataBlock(data []byte) ([]Record, error) {
 	offset := 0
 	lastKey := []byte(nil)
 	for offset < entriesEnd {
-		if entriesEnd-offset < 12 {
+		if entriesEnd-offset < 13 {
 			return nil, ErrInvalidSSTable
 		}
 		shared := int(binary.LittleEndian.Uint32(data[offset:]))
@@ -432,6 +446,15 @@ func DecodeDataBlock(data []byte) ([]Record, error) {
 		if shared > len(lastKey) || nonShared < 0 || valueLen < 0 {
 			return nil, ErrInvalidSSTable
 		}
+		if entriesEnd-offset < 1 {
+			return nil, ErrInvalidSSTable
+		}
+		flags := data[offset]
+		offset++
+		if flags&^1 != 0 {
+			return nil, ErrInvalidSSTable
+		}
+
 		if nonShared > entriesEnd-offset || valueLen > entriesEnd-offset-nonShared {
 			return nil, ErrInvalidSSTable
 		}
@@ -444,7 +467,7 @@ func DecodeDataBlock(data []byte) ([]Record, error) {
 		value := data[offset : offset+valueLen]
 		offset += valueLen
 
-		records = append(records, Record{Key: string(key), Val: string(value)})
+		records = append(records, Record{Key: string(key), Val: string(value), Deleted: flags&1 != 0})
 		lastKey = key
 	}
 	if offset != entriesEnd {

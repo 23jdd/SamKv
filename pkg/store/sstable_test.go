@@ -96,3 +96,26 @@ func TestWriteSStableSplitsDataBlocksAndUsesIndex(t *testing.T) {
 		t.Fatalf("index has %d data block(s), want at least 2", len(table.Index()))
 	}
 }
+func TestSStableTombstoneRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tombstone.sst")
+	_, err := WriteSStable(path, []Record{
+		{Key: "alive", Val: "value"},
+		{Key: "gone", Deleted: true},
+	})
+	if err != nil {
+		t.Fatalf("WriteSStable() error = %v", err)
+	}
+
+	table, err := OpenSStable(path)
+	if err != nil {
+		t.Fatalf("OpenSStable() error = %v", err)
+	}
+	defer table.Close()
+
+	if value, ok, err := table.Get("alive"); err != nil || !ok || value != "value" {
+		t.Fatalf("Get(alive) = %q, %v, %v; want value, true, nil", value, ok, err)
+	}
+	if value, ok, err := table.Get("gone"); err != nil || ok || value != "" {
+		t.Fatalf("Get(gone) = %q, %v, %v; want empty, false, nil", value, ok, err)
+	}
+}

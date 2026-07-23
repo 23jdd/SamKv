@@ -21,10 +21,17 @@ var (
 	ErrIMut = ErrImmutableMemTable
 )
 
+// MemValue 是 MemTable 中保存的值。
+// Deleted=true 表示这条记录是墓碑，用于覆盖旧 SSTable 中可能存在的旧值。
+type MemValue struct {
+	Value   string
+	Deleted bool
+}
+
 // MemTable 是写入路径上的有序内存表。
 // SkipList 自己负责保护节点结构；MemTable 只用 atomic 维护 size 和 mutable 状态。
 type MemTable struct {
-	table *skiplist.SkipList[string, string]
+	table *skiplist.SkipList[string, MemValue]
 	size  atomic.Int64
 	limit atomic.Int64
 
@@ -45,7 +52,7 @@ func Compare(a string, b string) int {
 // limit 是触发刷盘的近似大小阈值；limit <= 0 表示永不自动触发。
 func NewMemTable(limit int) *MemTable {
 	mt := &MemTable{
-		table: skiplist.New[string, string](Compare),
+		table: skiplist.New[string, MemValue](Compare),
 	}
 	mt.limit.Store(int64(limit))
 	mt.mutable.Store(true)
@@ -53,51 +60,62 @@ func NewMemTable(limit int) *MemTable {
 }
 
 // Get 根据 key 查询 value。
+// 如果 key 对应的是墓碑，返回 ok=false。
 func (mt *MemTable) Get(key string) (string, bool) {
-	return mt.table.Get(key)
+	value, ok := mt.table.Get(key)
+	if !ok || value.Deleted {
+		return "", false
+	}
+	return value.Value, true
 }
 
 // Put 插入或更新 key/value。
-// 如果 key 已存在，会替换旧 value，并按 value 长度差更新近似 size。
+// 如果 key 已存在，会替换旧记录；如果旧记录是墓碑，会重新变成普通值。
 func (mt *MemTable) Put(key string, value string) error {
 	if !mt.mutable.Load() {
 		return ErrImmutableMemTable
 	}
 
-	oldValue, replaced := mt.table.Set(key, value)
+	newValue := MemValue{Value: value}
+	oldValue, replaced := mt.table.Set(key, newValue)
 	if replaced {
-		mt.size.Add(int64(len(value) - len(oldValue)))
+		mt.size.Add(int64(recordSize(key, newValue) - recordSize(key, oldValue)))
 		return nil
 	}
 
-	mt.size.Add(int64(ComputeSize(len(key), len(value))))
+	mt.size.Add(int64(recordSize(key, newValue)))
 	return nil
 }
 
-// Delete 删除 key。
-// 删除成功时会扣减该 key/value 的近似大小。
+// Delete 写入 key 的墓碑记录。
+// 墓碑必须保留到 SSTable/Compaction 层，否则旧 SSTable 中的值可能被重新查出来。
 func (mt *MemTable) Delete(key string) error {
 	if !mt.mutable.Load() {
 		return ErrImmutableMemTable
 	}
 
-	oldValue, deleted := mt.table.Delete(key)
-	if deleted {
-		newSize := mt.size.Add(-int64(ComputeSize(len(key), len(oldValue))))
-		if newSize < 0 {
-			mt.size.Store(0)
-		}
+	newValue := MemValue{Deleted: true}
+	oldValue, replaced := mt.table.Set(key, newValue)
+	if replaced {
+		mt.size.Add(int64(recordSize(key, newValue) - recordSize(key, oldValue)))
+		return nil
 	}
+
+	mt.size.Add(int64(recordSize(key, newValue)))
 	return nil
 }
 
 // Entries 返回 MemTable 当前内容的有序快照。
-// 返回值已经转换成 SSTable 使用的 Record 类型，可以直接传给 WriteSStable。
+// 返回值包含墓碑记录，可以直接传给 WriteSStable。
 func (mt *MemTable) Entries() []Record {
 	entries := mt.table.Entries()
 	records := make([]Record, 0, len(entries))
 	for _, entry := range entries {
-		records = append(records, Record{Key: entry.Key, Val: entry.Value})
+		records = append(records, Record{
+			Key:     entry.Key,
+			Val:     entry.Value.Value,
+			Deleted: entry.Value.Deleted,
+		})
 	}
 	return records
 }
@@ -125,6 +143,7 @@ func (mt *MemTable) Size() int {
 }
 
 // Len 返回当前 MemTable 中 key 的数量。
+// 注意：墓碑也会占一个 key，因为它需要参与 flush 和后续 compaction。
 func (mt *MemTable) Len() int {
 	return mt.table.Len()
 }
@@ -142,7 +161,14 @@ func (mt *MemTable) Clear() {
 	mt.mutable.Store(true)
 }
 
-// ComputeSize 计算一条 key/value 记录在 MemTable 中的近似大小。
+// ComputeSize 计算一条普通 key/value 记录在 MemTable 中的近似大小。
 func ComputeSize(keylen int, valuelen int) int {
 	return keylen + valuelen + ApproximateEntrySize
+}
+
+func recordSize(key string, value MemValue) int {
+	if value.Deleted {
+		return ComputeSize(len(key), 0)
+	}
+	return ComputeSize(len(key), len(value.Value))
 }

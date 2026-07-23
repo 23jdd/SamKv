@@ -32,11 +32,19 @@ func TestMemTablePutUpdateDeleteAndSize(t *testing.T) {
 	if err := mt.Delete("b"); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
-	if mt.Size() != 0 {
-		t.Fatalf("size after delete = %d, want 0", mt.Size())
+	wantSize = ComputeSize(len("b"), 0)
+	if mt.Size() != wantSize {
+		t.Fatalf("size after tombstone = %d, want %d", mt.Size(), wantSize)
 	}
-	if mt.Len() != 0 {
-		t.Fatalf("len after delete = %d, want 0", mt.Len())
+	if mt.Len() != 1 {
+		t.Fatalf("len after tombstone = %d, want 1", mt.Len())
+	}
+	if _, ok := mt.Get("b"); ok {
+		t.Fatal("Get(b) found value after tombstone")
+	}
+	entries := mt.Entries()
+	if len(entries) != 1 || !entries[0].Deleted || entries[0].Key != "b" {
+		t.Fatalf("Entries() after delete = %#v, want one tombstone for b", entries)
 	}
 }
 
