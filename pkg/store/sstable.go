@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 )
 
@@ -125,7 +126,11 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 		return nil, err
 	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return nil, err
+	}
+	tmpPath := path + ".tmp"
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +139,7 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 	defer func() {
 		if !ok {
 			_ = file.Close()
+			_ = os.Remove(tmpPath)
 		}
 	}()
 
@@ -194,6 +200,9 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 	if err := file.Close(); err != nil {
 		return nil, err
 	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return nil, err
+	}
 	ok = true
 
 	return &SStable{
@@ -237,6 +246,10 @@ func OpenSStable(path string) (*SStable, error) {
 	if err != nil {
 		return nil, err
 	}
+	footerOffset := uint64(stat.Size() - int64(footerSize))
+	if err := validateFooterHandles(footer, footerOffset); err != nil {
+		return nil, err
+	}
 
 	metaData, err := readBlock(file, footer.MetaHandle)
 	if err != nil {
@@ -254,6 +267,11 @@ func OpenSStable(path string) (*SStable, error) {
 	index, err := decodeIndexBlock(indexData)
 	if err != nil {
 		return nil, err
+	}
+	for _, entry := range index {
+		if err := validateBlockHandle(entry.Handle, footer.MetaHandle.Offset); err != nil {
+			return nil, err
+		}
 	}
 
 	ok = true
@@ -748,6 +766,28 @@ func decodeFooter(data []byte) (Footer, error) {
 			Size:   binary.LittleEndian.Uint64(data[indexSizeOffset:]),
 		},
 	}, nil
+}
+
+// validateFooterHandles 校验元数据块和索引块都位于 Footer 之前且互不重叠。
+func validateFooterHandles(footer Footer, footerOffset uint64) error {
+	if err := validateBlockHandle(footer.MetaHandle, footerOffset); err != nil {
+		return err
+	}
+	if err := validateBlockHandle(footer.IndexHandle, footerOffset); err != nil {
+		return err
+	}
+	if footer.MetaHandle.Offset+footer.MetaHandle.Size > footer.IndexHandle.Offset {
+		return ErrInvalidSSTable
+	}
+	return nil
+}
+
+// validateBlockHandle 使用减法校验范围，避免 Offset+Size 发生整数溢出。
+func validateBlockHandle(handle BlockHandle, limit uint64) error {
+	if handle.Offset > limit || handle.Size > limit-handle.Offset {
+		return ErrInvalidSSTable
+	}
+	return nil
 }
 
 // readBlock 根据 BlockHandle 从文件中读取完整 block。

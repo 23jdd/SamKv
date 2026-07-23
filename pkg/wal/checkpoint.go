@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 )
@@ -10,12 +11,11 @@ import (
 func (wm *WalManger) Flush() error {
 	wm.writeMu.Lock()
 	defer wm.writeMu.Unlock()
-
 	return wm.flushBufferLocked()
 }
 
-// Reset 清空当前 wal.log，并重新打开一个可继续追加的新日志文件。
-// 只有在 MemTable 已经成功写成 SSTable 之后，才能调用 Reset。
+// Reset 清空当前 wal.log，并重新打开一个可继续追加的新文件。
+// Windows 的追加句柄不能直接 Truncate，因此必须在 writeMu 保护下关闭后重建。
 func (wm *WalManger) Reset() error {
 	wm.writeMu.Lock()
 	defer wm.writeMu.Unlock()
@@ -32,12 +32,11 @@ func (wm *WalManger) Reset() error {
 	if err != nil {
 		return err
 	}
-
 	wm.activeWriter.file = file
-	return nil
+	return file.Sync()
 }
 
-// Close 停止后台刷盘 goroutine，刷出剩余 buffer，并关闭 wal.log。
+// Close 停止后台刷盘协程，刷出剩余 buffer，并关闭 wal.log。
 func (wm *WalManger) Close() error {
 	var closeErr error
 	wm.closeOnce.Do(func() {
@@ -47,15 +46,16 @@ func (wm *WalManger) Close() error {
 		wm.bufmu.Unlock()
 
 		close(wm.done)
+		wm.backgroundWG.Wait()
 
 		wm.writeMu.Lock()
 		defer wm.writeMu.Unlock()
 
 		if err := wm.flushBufferLocked(); err != nil {
-			closeErr = err
+			closeErr = errors.Join(closeErr, err)
 		}
-		if err := wm.activeWriter.file.Close(); closeErr == nil {
-			closeErr = err
+		if err := wm.activeWriter.file.Close(); err != nil {
+			closeErr = errors.Join(closeErr, err)
 		}
 	})
 	return closeErr

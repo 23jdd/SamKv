@@ -9,15 +9,15 @@ import (
 )
 
 const (
-	DefaultSize   = 4 * 1024 // 4kb
+	DefaultSize   = 4 * 1024 // 4 KiB
 	FlushInterval = 50 * time.Millisecond
 )
-
-// Example
 
 type WalWriter struct {
 	file *os.File
 }
+
+// WalManger 管理 WAL 的内存缓冲、顺序写入和后台刷盘。
 type WalManger struct {
 	Dir          string
 	buffer       []byte
@@ -27,14 +27,15 @@ type WalManger struct {
 	bufmu        sync.Mutex
 	flushCond    sync.Cond
 	closed       bool
+	flushErr     error
 	done         chan struct{}
 	closeOnce    sync.Once
+	backgroundWG sync.WaitGroup
 }
 
-// seq
+// New 打开或创建 wal.log，并启动后台刷盘协程。
 func New(dir string) (*WalManger, error) {
-	err := os.MkdirAll(dir, 0644)
-	if err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
 	path := filepath.Join(dir, "wal.log")
@@ -42,77 +43,135 @@ func New(dir string) (*WalManger, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &WalWriter{file: file}
-	wm := &WalManger{}
-	wm.activeWriter = w
-	wm.buffer = make([]byte, 0, DefaultSize)
-	wm.flushBatch = make([]byte, 0, DefaultSize)
-	wm.Dir = dir
-	wm.done = make(chan struct{})
+
+	wm := &WalManger{
+		Dir:          dir,
+		buffer:       make([]byte, 0, DefaultSize),
+		flushBatch:   make([]byte, 0, DefaultSize),
+		activeWriter: &WalWriter{file: file},
+		done:         make(chan struct{}),
+	}
 	wm.flushCond = *sync.NewCond(&wm.bufmu)
+	wm.backgroundWG.Add(1)
 	go wm.Background()
 	return wm, nil
 }
 
+// AppendLog 将已经编码的 WAL 数据追加到缓冲区。
+// 大于默认缓冲容量的单条数据会先刷出旧缓冲，再直接写盘，避免永久等待。
 func (wm *WalManger) AppendLog(data []byte) error {
-	if len(data) > cap(wm.buffer) {
+	wm.bufmu.Lock()
+	if wm.closed {
+		wm.bufmu.Unlock()
+		return os.ErrClosed
+	}
+	if wm.flushErr != nil {
+		err := wm.flushErr
+		wm.bufmu.Unlock()
+		return err
+	}
+	wm.bufmu.Unlock()
+
+	if len(data) > DefaultSize {
 		wm.writeMu.Lock()
 		defer wm.writeMu.Unlock()
 
+		wm.bufmu.Lock()
+		closed := wm.closed
+		flushErr := wm.flushErr
+		wm.bufmu.Unlock()
+		if closed {
+			return os.ErrClosed
+		}
+		if flushErr != nil {
+			return flushErr
+		}
 		if err := wm.flushBufferLocked(); err != nil {
 			return err
 		}
 		return wm.writeAndSyncLocked(data)
 	}
+
 	wm.bufmu.Lock()
 	defer wm.bufmu.Unlock()
-	for len(wm.buffer)+len(data) > cap(wm.buffer) && !wm.closed {
+	for len(wm.buffer)+len(data) > cap(wm.buffer) && !wm.closed && wm.flushErr == nil {
 		wm.flushCond.Wait()
 	}
 	if wm.closed {
 		return os.ErrClosed
 	}
+	if wm.flushErr != nil {
+		return wm.flushErr
+	}
 	wm.buffer = append(wm.buffer, data...)
 	return nil
 }
+
 func (wm *WalManger) triggerFlush() error {
 	wm.writeMu.Lock()
 	defer wm.writeMu.Unlock()
-
 	return wm.flushBufferLocked()
 }
 
+// flushBufferLocked 交换活动缓冲和刷盘缓冲。
+// 调用方必须持有 writeMu；写盘失败的数据会放回活动缓冲，避免被下一批覆盖。
 func (wm *WalManger) flushBufferLocked() error {
 	wm.bufmu.Lock()
 	if len(wm.buffer) == 0 {
 		wm.bufmu.Unlock()
 		return nil
 	}
-	batch := wm.flushBatch
+	reusable := wm.flushBatch
 	wm.flushBatch = wm.buffer
-	wm.buffer = batch[:0]
+	wm.buffer = reusable[:0]
 	wm.flushCond.Broadcast()
 	wm.bufmu.Unlock()
 
-	return wm.writeAndSyncLocked(wm.flushBatch)
+	if err := wm.writeAndSyncLocked(wm.flushBatch); err != nil {
+		wm.bufmu.Lock()
+		failed := wm.flushBatch
+		restored := make([]byte, 0, len(failed)+len(wm.buffer))
+		restored = append(restored, failed...)
+		restored = append(restored, wm.buffer...)
+		wm.buffer = restored
+		wm.flushBatch = reusable[:0]
+		wm.flushErr = err
+		wm.flushCond.Broadcast()
+		wm.bufmu.Unlock()
+		return err
+	}
+
+	wm.bufmu.Lock()
+	wm.flushErr = nil
+	wm.bufmu.Unlock()
+	return nil
 }
 
 func (wm *WalManger) writeAndSyncLocked(data []byte) error {
-	if _, err := wm.activeWriter.file.Write(data); err != nil {
-		return err
+	for len(data) > 0 {
+		n, err := wm.activeWriter.file.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return os.ErrInvalid
+		}
+		data = data[n:]
 	}
 	return wm.activeWriter.file.Sync()
 }
 
-// flusher
+// Background 定时把 WAL 缓冲同步到磁盘。
 func (wm *WalManger) Background() {
+	defer wm.backgroundWG.Done()
+
 	ticker := time.NewTicker(FlushInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			if err := wm.triggerFlush(); err != nil {
-				log.Println("[WAL] Error", err)
+				log.Println("[WAL] flush error:", err)
 			}
 		case <-wm.done:
 			return
@@ -120,8 +179,16 @@ func (wm *WalManger) Background() {
 	}
 }
 
-func (wm *WalManger) AppendRecord(r *Record) error {
-	data, err := r.Encode()
+// Err 返回最近一次后台刷盘错误；后续刷盘成功后会清除该错误。
+func (wm *WalManger) Err() error {
+	wm.bufmu.Lock()
+	defer wm.bufmu.Unlock()
+	return wm.flushErr
+}
+
+// AppendRecord 编码并追加一条 WAL 记录。
+func (wm *WalManger) AppendRecord(record *Record) error {
+	data, err := record.Encode()
 	if err != nil {
 		return err
 	}

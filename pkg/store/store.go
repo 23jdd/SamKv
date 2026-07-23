@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,14 +27,27 @@ type StoreManger struct {
 	manifest      Manifest
 }
 
-// NewStoreManger 创建 Store，并加载目录中已有的 SSTable 文件。
+// NewStoreManger 创建 Store，加载 Manifest/SSTable，并自动回放尚未 checkpoint 的 WAL。
 func NewStoreManger(dir string, limit int) (*StoreManger, error) {
 	wm, err := wal.New(dir)
 	if err != nil {
 		return nil, err
 	}
-	st := &StoreManger{dir: dir, mem: NewMemTable(limit), wm: wm, nextSSTableID: 1, manifest: newManifest()}
+
+	st := &StoreManger{
+		dir:           dir,
+		mem:           NewMemTable(limit),
+		wm:            wm,
+		nextSSTableID: 1,
+		manifest:      newManifest(),
+	}
 	if err := st.loadSSTables(); err != nil {
+		st.closeSSTables()
+		_ = wm.Close()
+		return nil, err
+	}
+	if err := RecoverWALFile(filepath.Join(dir, "wal.log"), st.mem); err != nil {
+		st.closeSSTables()
 		_ = wm.Close()
 		return nil, err
 	}
@@ -78,8 +92,8 @@ func (st *StoreManger) Get(key string) (string, bool) {
 	return "", false
 }
 
-// Delete 删除 key。
-// 删除会写 WAL，并在 MemTable 中写入墓碑。
+// Delete 写入 key 的墓碑。
+// 墓碑会覆盖旧 SSTable 中可能存在的旧值。
 func (st *StoreManger) Delete(key string) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -95,24 +109,27 @@ func (st *StoreManger) Close() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	var firstErr error
+	tableErr := st.closeSSTables()
+	return errors.Join(tableErr, st.wm.Close())
+}
+
+func (st *StoreManger) closeSSTables() error {
+	var closeErr error
 	for _, table := range st.sstables {
-		if err := table.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		closeErr = errors.Join(closeErr, table.Close())
 	}
-	if err := st.wm.Close(); err != nil && firstErr == nil {
-		firstErr = err
-	}
-	return firstErr
+	return closeErr
 }
 
 // Checkpoint 将当前 MemTable 写成 SSTable，然后清空 WAL。
-// 顺序必须是：Flush WAL -> Write SSTable -> Reset WAL -> Clear MemTable。
+// 顺序必须是：Flush WAL -> Write SSTable -> Publish Manifest -> Reset WAL -> Clear MemTable。
 func (st *StoreManger) Checkpoint() (string, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	return st.checkpointLocked()
+}
 
+func (st *StoreManger) checkpointLocked() (string, error) {
 	if err := st.wm.Flush(); err != nil {
 		return "", err
 	}
@@ -125,34 +142,37 @@ func (st *StoreManger) Checkpoint() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		st.sstables = append(st.sstables, table)
-		st.nextSSTableID++
-		st.manifest.SSTables = append(st.manifest.SSTables, manifestEntryFromSSTable(path, table))
-		st.manifest.NextFileID = st.nextSSTableID
-		if err := saveManifest(st.dir, st.manifest); err != nil {
+
+		nextManifest := st.manifest
+		nextManifest.SSTables = append([]ManifestSSTable(nil), st.manifest.SSTables...)
+		nextManifest.SSTables = append(nextManifest.SSTables, manifestEntryFromSSTable(path, table))
+		nextManifest.NextFileID = st.nextSSTableID + 1
+		if err := saveManifest(st.dir, nextManifest); err != nil {
+			_ = table.Close()
+			_ = os.Remove(path)
 			return "", err
 		}
+
+		st.sstables = append(st.sstables, table)
+		st.nextSSTableID++
+		st.manifest = nextManifest
 	}
 
 	if err := st.wm.Reset(); err != nil {
-		return "", err
+		return path, err
 	}
 	st.mem.Clear()
 	return path, nil
 }
 
-// ReLoad 从 wal.log 重放记录到当前 MemTable。
-func (st *StoreManger) ReLoad() {
+// ReLoad 清空当前 MemTable，并重新回放 wal.log。
+// 正常启动不需要手动调用；NewStoreManger 已经自动完成恢复。
+func (st *StoreManger) ReLoad() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	path := filepath.Join(st.wm.Dir, "wal.log")
-	reader, err := os.Open(path)
-	if err != nil {
-		panic(err)
-	}
-	defer reader.Close()
-	_ = Recover(reader, st.mem)
+	st.mem.Clear()
+	return RecoverWALFile(filepath.Join(st.dir, "wal.log"), st.mem)
 }
 
 func (st *StoreManger) loadSSTables() error {
@@ -174,12 +194,14 @@ func (st *StoreManger) loadSSTables() error {
 	for _, path := range paths {
 		table, err := OpenSStable(path)
 		if err != nil {
+			st.closeSSTables()
+			st.sstables = nil
 			return err
 		}
 		st.sstables = append(st.sstables, table)
 
-		id, ok := sstableID(path)
-		if ok && id > maxID {
+		id, valid := sstableID(path)
+		if valid && id > maxID {
 			maxID = id
 		}
 	}
@@ -204,12 +226,14 @@ func (st *StoreManger) loadSSTablesFromManifest(manifest Manifest) error {
 		path := filepath.Join(st.dir, entry.File)
 		table, err := OpenSStable(path)
 		if err != nil {
+			st.closeSSTables()
+			st.sstables = nil
 			return err
 		}
 		st.sstables = append(st.sstables, table)
 
-		id, ok := sstableID(path)
-		if ok && id > maxID {
+		id, valid := sstableID(path)
+		if valid && id > maxID {
 			maxID = id
 		}
 	}
@@ -231,6 +255,7 @@ func manifestFromSSTables(nextFileID uint64, paths []string, tables []*SStable) 
 	}
 	return manifest
 }
+
 func (st *StoreManger) nextSSTablePathLocked() string {
 	return filepath.Join(st.dir, fmt.Sprintf("%020d.sst", st.nextSSTableID))
 }

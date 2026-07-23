@@ -13,7 +13,7 @@ func TestAppendRecordLargerThanBufferWritesDirectly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer wm.activeWriter.file.Close()
+	defer wm.Close()
 
 	value := bytes.Repeat([]byte("x"), DefaultSize)
 	record := PutRecord([]byte("large-key"), value)

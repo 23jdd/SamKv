@@ -3,8 +3,10 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const manifestFileName = "MANIFEST"
@@ -17,7 +19,7 @@ type Manifest struct {
 }
 
 // ManifestSSTable 是 Manifest 中的一条 SSTable 元数据。
-// Level 预留给后续 compaction 分层使用；当前实现先固定为 0。
+// Level 预留给后续 compaction 分层使用；新写入文件从 L0 开始。
 type ManifestSSTable struct {
 	File        string `json:"file"`
 	Level       int    `json:"level"`
@@ -30,55 +32,99 @@ func newManifest() Manifest {
 	return Manifest{NextFileID: 1}
 }
 
-// manifestPath 返回 Manifest 文件在当前 Store 目录中的完整路径。
 func manifestPath(dir string) string {
 	return filepath.Join(dir, manifestFileName)
 }
 
+func manifestBackupPath(dir string) string {
+	return manifestPath(dir) + ".bak"
+}
+
 // loadManifest 从磁盘读取 Manifest。
-// 第二个返回值表示文件是否存在；不存在时返回一个空的新 Manifest，方便兼容旧数据目录。
+// 主文件不存在时会尝试备份文件，用于恢复 Windows 上替换文件中途发生的崩溃。
 func loadManifest(dir string) (Manifest, bool, error) {
-	data, err := os.ReadFile(manifestPath(dir))
+	manifest, err := readManifest(manifestPath(dir))
+	if err == nil {
+		return manifest, true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return Manifest{}, true, err
+	}
+
+	manifest, err = readManifest(manifestBackupPath(dir))
+	if err == nil {
+		return manifest, true, nil
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return newManifest(), false, nil
 	}
+	return Manifest{}, true, err
+}
+
+func readManifest(path string) (Manifest, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return Manifest{}, false, err
+		return Manifest{}, err
 	}
 
 	var manifest Manifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return Manifest{}, true, err
+		return Manifest{}, fmt.Errorf("store: decode manifest: %w", err)
 	}
 	if manifest.NextFileID == 0 {
 		manifest.NextFileID = 1
 	}
-	return manifest, true, nil
+	if err := validateManifest(manifest); err != nil {
+		return Manifest{}, err
+	}
+	return manifest, nil
 }
 
-// saveManifest 以临时文件 + rename 的方式写入 Manifest。
-// 这样可以避免进程在写入中途崩溃时留下半截 MANIFEST。
+func validateManifest(manifest Manifest) error {
+	seen := make(map[string]struct{}, len(manifest.SSTables))
+	for _, entry := range manifest.SSTables {
+		if entry.File == "" || filepath.Base(entry.File) != entry.File || !strings.HasSuffix(entry.File, ".sst") {
+			return fmt.Errorf("store: invalid manifest sstable path %q", entry.File)
+		}
+		if entry.Level < 0 {
+			return fmt.Errorf("store: invalid manifest level %d", entry.Level)
+		}
+		if _, ok := seen[entry.File]; ok {
+			return fmt.Errorf("store: duplicate manifest sstable %q", entry.File)
+		}
+		seen[entry.File] = struct{}{}
+	}
+	return nil
+}
+
+// saveManifest 先完整写入临时文件，再发布为 MANIFEST。
+// Windows 不能直接用 rename 覆盖已有文件，因此使用 .bak 保留旧版本并支持崩溃恢复。
 func saveManifest(dir string, manifest Manifest) error {
 	if manifest.NextFileID == 0 {
 		manifest.NextFileID = 1
+	}
+	if err := validateManifest(manifest); err != nil {
+		return err
 	}
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
+	data = append(data, 10)
 
-	tmpPath := manifestPath(dir) + ".tmp"
+	targetPath := manifestPath(dir)
+	tmpPath := targetPath + ".tmp"
+	backupPath := manifestBackupPath(dir)
 	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 
-	ok := false
+	published := false
 	defer func() {
-		if !ok {
-			_ = file.Close()
+		_ = file.Close()
+		if !published {
 			_ = os.Remove(tmpPath)
 		}
 	}()
@@ -92,8 +138,28 @@ func saveManifest(dir string, manifest Manifest) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	ok = true
-	return os.Rename(tmpPath, manifestPath(dir))
+
+	// Unix 可以直接覆盖目标文件，先尝试这条最短路径。
+	if err := os.Rename(tmpPath, targetPath); err == nil {
+		published = true
+		_ = os.Remove(backupPath)
+		return nil
+	} else if _, statErr := os.Stat(targetPath); statErr != nil {
+		return err
+	}
+
+	// Windows 路径：旧 MANIFEST 先改名为备份，再发布新文件。
+	_ = os.Remove(backupPath)
+	if err := os.Rename(targetPath, backupPath); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, targetPath); err != nil {
+		_ = os.Rename(backupPath, targetPath)
+		return err
+	}
+	published = true
+	_ = os.Remove(backupPath)
+	return nil
 }
 
 // manifestEntryFromSSTable 从 SSTable 的 MetaBlock 中提取 Manifest 需要保存的元数据。
