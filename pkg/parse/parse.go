@@ -63,10 +63,11 @@ type LabelMatcher struct {
 	Value string `parser:"@(String | Ident | Number)"`
 }
 
-// QueryFormat 是 query{labels}[range] offset duration 查询的语法树。
-// offset 是可选部分，省略时为 0。
+// QueryFormat 是 matcher{labels}[range] offset duration 查询的语法树。
+// Query 保存日志内容匹配字符串；offset 是可选部分，省略时为 0。
 type QueryFormat struct {
-	Labels []LabelMatcher `parser:"'query' '{' ( @@ ( ',' @@ )* )? '}'"`
+	Query  string         `parser:"@(String | Ident | Number)"`
+	Labels []LabelMatcher `parser:"'{' ( @@ ( ',' @@ )* )? '}'"`
 	Range  Duration       `parser:"'[' @Duration ']'"`
 	Offset Duration       `parser:"( 'offset' @Duration )?"`
 }
@@ -92,6 +93,9 @@ func (q QueryFormat) TimeRange(now time.Time) (start, end time.Time) {
 }
 
 func (q QueryFormat) validate() error {
+	if q.Query == "" {
+		return errors.New("query matcher must not be empty")
+	}
 	if q.Range.Value() <= 0 {
 		return errors.New("range must be greater than zero")
 	}
