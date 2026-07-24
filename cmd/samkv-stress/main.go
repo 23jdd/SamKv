@@ -29,18 +29,25 @@ type stressConfig struct {
 }
 
 type stressReport struct {
-	Directory        string                `json:"directory"`
-	Mode             string                `json:"mode"`
-	Records          int                   `json:"records"`
-	Concurrency      int                   `json:"concurrency"`
-	ValueBytes       int                   `json:"value_bytes"`
-	Duration         time.Duration         `json:"duration"`
-	OperationsPerSec float64               `json:"operations_per_second"`
-	Verified         bool                  `json:"verified"`
-	WALBytes         int64                 `json:"wal_bytes"`
-	SSTableBytes     int64                 `json:"sstable_bytes"`
-	SSTables         int                   `json:"sstables"`
-	BlockCache       store.BlockCacheStats `json:"block_cache"`
+	Directory             string                `json:"directory"`
+	Mode                  string                `json:"mode"`
+	Records               int                   `json:"records"`
+	Concurrency           int                   `json:"concurrency"`
+	ValueBytes            int                   `json:"value_bytes"`
+	WALSyncPolicy         string                `json:"wal_sync_policy"`
+	WriteDuration         time.Duration         `json:"write_duration"`
+	WriteOperationsPerSec float64               `json:"write_operations_per_second"`
+	PayloadMiBPerSec      float64               `json:"payload_mib_per_second"`
+	CheckpointDuration    time.Duration         `json:"checkpoint_duration"`
+	ReopenDuration        time.Duration         `json:"reopen_duration"`
+	VerifyDuration        time.Duration         `json:"verify_duration"`
+	Duration              time.Duration         `json:"duration"`
+	OperationsPerSec      float64               `json:"operations_per_second"`
+	Verified              bool                  `json:"verified"`
+	WALBytes              int64                 `json:"wal_bytes"`
+	SSTableBytes          int64                 `json:"sstable_bytes"`
+	SSTables              int                   `json:"sstables"`
+	BlockCache            store.BlockCacheStats `json:"block_cache"`
 }
 
 func main() {
@@ -74,38 +81,92 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	started := time.Now()
 	baseTimestamp := time.Now().UTC()
-	writeErr := runWrites(database, config, baseTimestamp)
-	if writeErr == nil {
-		_, writeErr = database.Checkpoint()
+
+	writeStarted := time.Now()
+	phaseErr := runWrites(database, config, baseTimestamp)
+	writeDuration := time.Since(writeStarted)
+
+	var checkpointDuration time.Duration
+	if phaseErr == nil {
+		checkpointStarted := time.Now()
+		_, phaseErr = database.Checkpoint()
+		checkpointDuration = time.Since(checkpointStarted)
 	}
-	verified := false
-	if writeErr == nil && config.verify {
-		writeErr = verifyWrites(database, config, baseTimestamp)
-		verified = writeErr == nil
-	}
-	duration := time.Since(started)
+
 	stats := database.Stats()
 	closeErr := database.Close()
-	if err := errors.Join(writeErr, closeErr); err != nil {
+	if err := errors.Join(phaseErr, closeErr); err != nil {
 		return err
 	}
+
+	var reopenDuration, verifyDuration time.Duration
+	verified := false
+	if config.verify {
+		reopenStarted := time.Now()
+		database, err = store.NewStoreManagerWithOptions(dir, options)
+		reopenDuration = time.Since(reopenStarted)
+		if err != nil {
+			return err
+		}
+
+		verifyStarted := time.Now()
+		verifyErr := verifyWrites(database, config, baseTimestamp)
+		verifyDuration = time.Since(verifyStarted)
+		verified = verifyErr == nil
+		stats = database.Stats()
+		closeErr = database.Close()
+		if err := errors.Join(verifyErr, closeErr); err != nil {
+			return err
+		}
+	}
+
+	duration := time.Since(started)
+	payloadBytes := int64(config.count) * int64(config.valueBytes)
 	report := stressReport{
-		Directory:        dir,
-		Mode:             config.mode,
-		Records:          config.count,
-		Concurrency:      config.concurrency,
-		ValueBytes:       config.valueBytes,
-		Duration:         duration,
-		OperationsPerSec: float64(config.count) / duration.Seconds(),
-		Verified:         verified,
-		WALBytes:         stats.WALBytes,
-		SSTableBytes:     stats.SSTableBytes,
-		SSTables:         stats.SSTables,
-		BlockCache:       stats.BlockCache,
+		Directory:             dir,
+		Mode:                  config.mode,
+		Records:               config.count,
+		Concurrency:           config.concurrency,
+		ValueBytes:            config.valueBytes,
+		WALSyncPolicy:         syncPolicyName(config.strict),
+		WriteDuration:         writeDuration,
+		WriteOperationsPerSec: operationsPerSecond(config.count, writeDuration),
+		PayloadMiBPerSec:      mebibytesPerSecond(payloadBytes, writeDuration),
+		CheckpointDuration:    checkpointDuration,
+		ReopenDuration:        reopenDuration,
+		VerifyDuration:        verifyDuration,
+		Duration:              duration,
+		OperationsPerSec:      operationsPerSecond(config.count, duration),
+		Verified:              verified,
+		WALBytes:              stats.WALBytes,
+		SSTableBytes:          stats.SSTableBytes,
+		SSTables:              stats.SSTables,
+		BlockCache:            stats.BlockCache,
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(report)
+}
+
+func syncPolicyName(strict bool) string {
+	if strict {
+		return "every-write"
+	}
+	return "interval"
+}
+
+func operationsPerSecond(count int, duration time.Duration) float64 {
+	if duration <= 0 {
+		return 0
+	}
+	return float64(count) / duration.Seconds()
+}
+
+func mebibytesPerSecond(bytes int64, duration time.Duration) float64 {
+	if duration <= 0 {
+		return 0
+	}
+	return float64(bytes) / (1024 * 1024) / duration.Seconds()
 }
 
 func parseConfig(args []string, output io.Writer) (stressConfig, error) {
