@@ -185,7 +185,7 @@ func (st *StoreManger) restoreSequence() error {
 	}
 
 	for _, table := range st.sstables {
-		records, err := table.AllRecords()
+		records, err := table.scan("", "", false)
 		if err != nil {
 			return err
 		}
