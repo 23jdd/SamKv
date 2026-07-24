@@ -14,9 +14,10 @@ const (
 // CompareFunc 定义 Key 的比较方式。
 //
 // 返回值：
-//   < 0：a < b
-//   = 0：a == b
-//   > 0：a > b
+//
+//	< 0：a < b
+//	= 0：a == b
+//	> 0：a > b
 type CompareFunc[K any] func(a, b K) int
 
 type Node[K any, V any] struct {
@@ -128,8 +129,9 @@ func (s *SkipList[K, V]) Add(key K, value V) bool {
 // Set 插入或更新元素。
 //
 // 返回值：
-//   oldValue：Key 原来对应的 Value
-//   replaced：是否替换了已有元素
+//
+//	oldValue：Key 原来对应的 Value
+//	replaced：是否替换了已有元素
 //
 // 如果 Key 不存在，会插入新节点，replaced 为 false。
 func (s *SkipList[K, V]) Set(key K, value V) (
