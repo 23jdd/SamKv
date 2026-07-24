@@ -11,6 +11,9 @@ const (
 	DefaultMemTableLimit       = 4 * 1024 * 1024
 	DefaultCompactionThreshold = 4
 	DefaultBlockCacheBytes     = 64 * 1024 * 1024
+	DefaultMaxLevels           = 4
+	DefaultLevelBaseSizeBytes  = 64 * 1024 * 1024
+	DefaultLevelSizeMultiplier = 10
 )
 
 // WALSyncPolicy 是 Store 对 WAL 持久性策略的公开别名。
@@ -35,6 +38,12 @@ type Options struct {
 	AutoCheckpoint bool
 	// CompactionThreshold 是触发自动 Compaction 的 SSTable 数量，0 表示关闭自动 Compaction。
 	CompactionThreshold int
+	// MaxLevels 是 LSM 层数，至少为 2；L0 用于刷盘文件。
+	MaxLevels int
+	// LevelBaseSizeBytes 是 L1 触发下推到 L2 的近似字节阈值。
+	LevelBaseSizeBytes int64
+	// LevelSizeMultiplier 是相邻非零层容量阈值的倍率。
+	LevelSizeMultiplier int
 	// Retention 是日志保留时长，仅在 Compaction 时淘汰过期记录，0 表示永久保留。
 	Retention time.Duration
 	// MaxSizeBytes 是 Compaction 后允许保留的近似数据量，0 表示不限制容量。
@@ -53,6 +62,9 @@ func DefaultOptions() Options {
 		MemTableLimit:       DefaultMemTableLimit,
 		AutoCheckpoint:      true,
 		CompactionThreshold: DefaultCompactionThreshold,
+		MaxLevels:           DefaultMaxLevels,
+		LevelBaseSizeBytes:  DefaultLevelBaseSizeBytes,
+		LevelSizeMultiplier: DefaultLevelSizeMultiplier,
 		BlockCacheBytes:     DefaultBlockCacheBytes,
 		WALSyncPolicy:       WALSyncInterval,
 		WALSyncInterval:     wal.FlushInterval,
@@ -62,6 +74,9 @@ func DefaultOptions() Options {
 func validateOptions(options Options) error {
 	if options.MemTableLimit < 0 ||
 		options.CompactionThreshold < 0 ||
+		options.MaxLevels < 2 ||
+		options.LevelBaseSizeBytes <= 0 ||
+		options.LevelSizeMultiplier < 2 ||
 		options.Retention < 0 ||
 		options.MaxSizeBytes < 0 ||
 		options.BlockCacheBytes < 0 ||
