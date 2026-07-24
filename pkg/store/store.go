@@ -153,36 +153,51 @@ func (st *StoreManger) Put(key string, val string) error {
 }
 
 // Get 按“活动表 -> 新只读表 -> 旧只读表 -> 新 SSTable -> 旧 SSTable”的顺序查询。
+// 兼容旧 API；发生磁盘读取错误时返回未找到，并通过 BackgroundError 暴露故障。
 func (st *StoreManger) Get(key string) (string, bool) {
+	value, found, _ := st.GetWithError(key)
+	return value, found
+}
+
+// GetWithError 返回点查询结果，并保留 SSTable 校验或读取错误。
+func (st *StoreManger) GetWithError(key string) (string, bool, error) {
 	st.stats.readOperations.Add(1)
 	st.mu.RLock()
-	defer st.mu.RUnlock()
 
 	if entry, ok := st.mem.GetEntry(key); ok {
+		st.mu.RUnlock()
 		if entry.Deleted {
-			return "", false
+			return "", false, nil
 		}
-		return entry.Value, true
+		return entry.Value, true, nil
 	}
 	for i := len(st.immutables) - 1; i >= 0; i-- {
 		if entry, ok := st.immutables[i].GetEntry(key); ok {
+			st.mu.RUnlock()
 			if entry.Deleted {
-				return "", false
+				return "", false, nil
 			}
-			return entry.Value, true
+			return entry.Value, true, nil
 		}
 	}
 	for i := len(st.sstables) - 1; i >= 0; i-- {
 		record, ok, err := st.sstables[i].GetRecord(key)
-		if err != nil || !ok {
+		if err != nil {
+			st.mu.RUnlock()
+			st.setBackgroundError(err)
+			return "", false, err
+		}
+		if !ok {
 			continue
 		}
+		st.mu.RUnlock()
 		if record.Deleted {
-			return "", false
+			return "", false, nil
 		}
-		return record.Val, true
+		return record.Val, true, nil
 	}
-	return "", false
+	st.mu.RUnlock()
+	return "", false, nil
 }
 
 // Delete 写入墓碑，用于覆盖所有旧层级中的同名 key。
