@@ -22,6 +22,10 @@ type CompactionResult struct {
 // Compact 合并当前所有 SSTable，只保留每个 key 的最新版本。
 // 因为输入覆盖了全部磁盘层，墓碑可安全删除；结构化日志还会应用时间和容量保留策略。
 func (st *StoreManger) Compact() (CompactionResult, error) {
+	return st.compactAll(false)
+}
+
+func (st *StoreManger) compactAll(forceRewrite bool) (CompactionResult, error) {
 	st.maintenanceMu.Lock()
 	defer st.maintenanceMu.Unlock()
 
@@ -36,11 +40,11 @@ func (st *StoreManger) Compact() (CompactionResult, error) {
 	now := st.now
 	st.mu.RUnlock()
 
-	result := CompactionResult{InputTables: len(tables)}
+	result := CompactionResult{SourceLevel: -1, TargetLevel: 1, InputTables: len(tables)}
 	if len(tables) == 0 {
 		return result, nil
 	}
-	if len(tables) == 1 && options.Retention == 0 && options.MaxSizeBytes == 0 {
+	if !forceRewrite && len(tables) == 1 && options.Retention == 0 && options.MaxSizeBytes == 0 {
 		return result, nil
 	}
 
