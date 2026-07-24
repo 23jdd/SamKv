@@ -16,7 +16,7 @@ func TestStressRunnerVerifiesPersistedKVAndLogWorkloads(t *testing.T) {
 				"-value-bytes", "32",
 			)
 			if report.Mode != mode || report.Records != 100 || !report.Verified ||
-				report.WALSyncPolicy != "interval" || report.SSTables == 0 {
+				report.WALSyncPolicy != "interval" || report.PayloadPattern != "repeated" || report.SSTables == 0 {
 				t.Fatalf("report = %#v", report)
 			}
 			if report.WriteDuration <= 0 || report.WriteOperationsPerSec <= 0 ||
@@ -39,9 +39,10 @@ func TestStressRunnerReportsEveryWriteDurability(t *testing.T) {
 		"-count", "20",
 		"-concurrency", "2",
 		"-value-bytes", "16",
+		"-payload-pattern", "random",
 		"-strict",
 	)
-	if report.WALSyncPolicy != "every-write" || !report.Verified ||
+	if report.WALSyncPolicy != "every-write" || report.PayloadPattern != "random" || !report.Verified ||
 		report.WriteOperationsPerSec <= 0 {
 		t.Fatalf("report = %#v", report)
 	}
@@ -63,12 +64,24 @@ func TestStressRunnerCanSkipReopenVerification(t *testing.T) {
 	}
 }
 
+func TestStressPayloadPatternsAreDeterministic(t *testing.T) {
+	repeated := stressPayload(stressConfig{valueBytes: 64, payloadPattern: "repeated"})
+	randomFirst := stressPayload(stressConfig{valueBytes: 64, payloadPattern: "random"})
+	randomSecond := stressPayload(stressConfig{valueBytes: 64, payloadPattern: "random"})
+	if !bytes.Equal(repeated, bytes.Repeat([]byte("x"), 64)) {
+		t.Fatal("repeated payload is not compressible test data")
+	}
+	if bytes.Equal(repeated, randomFirst) || !bytes.Equal(randomFirst, randomSecond) {
+		t.Fatal("random payload must be deterministic and distinct")
+	}
+}
 func TestStressRunnerRejectsInvalidConfiguration(t *testing.T) {
 	for _, args := range [][]string{
 		{"-mode", "unknown"},
 		{"-count", "0"},
 		{"-concurrency", "0"},
 		{"-value-bytes", "-1"},
+		{"-payload-pattern", "unknown"},
 		{"unexpected"},
 	} {
 		var stdout, stderr bytes.Buffer

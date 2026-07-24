@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,13 +20,14 @@ import (
 )
 
 type stressConfig struct {
-	dir         string
-	mode        string
-	count       int
-	concurrency int
-	valueBytes  int
-	strict      bool
-	verify      bool
+	dir            string
+	mode           string
+	count          int
+	concurrency    int
+	valueBytes     int
+	payloadPattern string
+	strict         bool
+	verify         bool
 }
 
 type stressReport struct {
@@ -34,6 +36,7 @@ type stressReport struct {
 	Records               int                   `json:"records"`
 	Concurrency           int                   `json:"concurrency"`
 	ValueBytes            int                   `json:"value_bytes"`
+	PayloadPattern        string                `json:"payload_pattern"`
 	WALSyncPolicy         string                `json:"wal_sync_policy"`
 	WriteDuration         time.Duration         `json:"write_duration"`
 	WriteOperationsPerSec float64               `json:"write_operations_per_second"`
@@ -128,6 +131,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		Records:               config.count,
 		Concurrency:           config.concurrency,
 		ValueBytes:            config.valueBytes,
+		PayloadPattern:        config.payloadPattern,
 		WALSyncPolicy:         syncPolicyName(config.strict),
 		WriteDuration:         writeDuration,
 		WriteOperationsPerSec: operationsPerSecond(config.count, writeDuration),
@@ -178,6 +182,7 @@ func parseConfig(args []string, output io.Writer) (stressConfig, error) {
 	flags.IntVar(&config.count, "count", 100_000, "number of records")
 	flags.IntVar(&config.concurrency, "concurrency", runtime.GOMAXPROCS(0), "writer goroutines")
 	flags.IntVar(&config.valueBytes, "value-bytes", 256, "value or message bytes")
+	flags.StringVar(&config.payloadPattern, "payload-pattern", "repeated", "payload pattern: repeated or random")
 	flags.BoolVar(&config.strict, "strict", false, "fsync every write")
 	flags.BoolVar(&config.verify, "verify", true, "read all records after checkpoint")
 	if err := flags.Parse(args); err != nil {
@@ -191,6 +196,9 @@ func parseConfig(args []string, output io.Writer) (stressConfig, error) {
 	}
 	if config.count <= 0 || config.concurrency <= 0 || config.valueBytes < 0 {
 		return stressConfig{}, errors.New("count and concurrency must be positive; value-bytes must not be negative")
+	}
+	if config.payloadPattern != "repeated" && config.payloadPattern != "random" {
+		return stressConfig{}, errors.New("payload-pattern must be repeated or random")
 	}
 	return config, nil
 }
@@ -217,8 +225,19 @@ func prepareDirectory(requested string) (string, func(), error) {
 	return dir, func() {}, nil
 }
 
+// stressPayload 生成可复现的高压缩或低压缩测试数据，避免随机源本身进入计时阶段。
+func stressPayload(config stressConfig) []byte {
+	if config.payloadPattern == "repeated" {
+		return bytes.Repeat([]byte("x"), config.valueBytes)
+	}
+	payload := make([]byte, config.valueBytes)
+	random := rand.New(rand.NewSource(1))
+	_, _ = random.Read(payload)
+	return payload
+}
+
 func runWrites(database *store.StoreManager, config stressConfig, base time.Time) error {
-	value := bytes.Repeat([]byte("x"), config.valueBytes)
+	value := stressPayload(config)
 	labels := []utils.Label{{Name: "app", Value: "stress"}}
 	var next atomic.Int64
 	var firstErr error
