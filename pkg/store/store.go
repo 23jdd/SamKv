@@ -30,6 +30,7 @@ type StoreManger struct {
 	immutables []*MemTable
 	wm         *wal.WalManger
 	options    Options
+	blockCache *BlockCache
 
 	sstables      []*SStable
 	nextSSTableID uint64
@@ -92,6 +93,7 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 		mem:           NewMemTable(options.MemTableLimit),
 		wm:            wm,
 		options:       options,
+		blockCache:    NewBlockCache(options.BlockCacheBytes),
 		nextSSTableID: 1,
 		manifest:      newManifest(),
 		flushCh:       make(chan struct{}, 1),
@@ -340,6 +342,7 @@ func (st *StoreManger) flushOldestImmutable() (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
+	table.SetBlockCache(st.blockCache)
 
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -490,6 +493,7 @@ func (st *StoreManger) loadSSTables() error {
 			st.sstables = nil
 			return err
 		}
+		table.SetBlockCache(st.blockCache)
 		st.sstables = append(st.sstables, table)
 		id, valid := sstableID(path)
 		if valid && id > maxID {
@@ -520,6 +524,7 @@ func (st *StoreManger) loadSSTablesFromManifest(manifest Manifest) error {
 			st.sstables = nil
 			return err
 		}
+		table.SetBlockCache(st.blockCache)
 		st.sstables = append(st.sstables, table)
 		id, valid := sstableID(path)
 		if valid && id > maxID {

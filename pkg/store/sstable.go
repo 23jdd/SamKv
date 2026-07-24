@@ -113,6 +113,7 @@ type SStable struct {
 	index   []IndexEntry
 	meta    MetaBlock
 	footer  Footer
+	cache   *BlockCache
 }
 
 // NewSStable 在内存中创建一张 SSTable 描述对象。
@@ -307,6 +308,13 @@ func OpenSStable(path string) (*SStable, error) {
 		meta:    meta,
 		footer:  footer,
 	}, nil
+}
+
+// SetBlockCache 设置 Store 共享的只读 Block Cache。
+func (s *SStable) SetBlockCache(cache *BlockCache) {
+	if s != nil {
+		s.cache = cache
+	}
 }
 
 // Close 关闭 SSTable 持有的文件句柄。

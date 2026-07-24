@@ -10,6 +10,7 @@ import (
 const (
 	DefaultMemTableLimit       = 4 * 1024 * 1024
 	DefaultCompactionThreshold = 4
+	DefaultBlockCacheBytes     = 64 * 1024 * 1024
 )
 
 // WALSyncPolicy 是 Store 对 WAL 持久性策略的公开别名。
@@ -38,6 +39,8 @@ type Options struct {
 	Retention time.Duration
 	// MaxSizeBytes 是 Compaction 后允许保留的近似数据量，0 表示不限制容量。
 	MaxSizeBytes int64
+	// BlockCacheBytes 是共享 SSTable Block Cache 的容量，0 表示禁用。
+	BlockCacheBytes int64
 	// WALSyncPolicy 决定写入返回前是否必须完成 fsync。
 	WALSyncPolicy WALSyncPolicy
 	// WALSyncInterval 是周期同步模式的刷盘间隔；0 使用 WAL 默认值。
@@ -50,6 +53,7 @@ func DefaultOptions() Options {
 		MemTableLimit:       DefaultMemTableLimit,
 		AutoCheckpoint:      true,
 		CompactionThreshold: DefaultCompactionThreshold,
+		BlockCacheBytes:     DefaultBlockCacheBytes,
 		WALSyncPolicy:       WALSyncInterval,
 		WALSyncInterval:     wal.FlushInterval,
 	}
@@ -60,6 +64,7 @@ func validateOptions(options Options) error {
 		options.CompactionThreshold < 0 ||
 		options.Retention < 0 ||
 		options.MaxSizeBytes < 0 ||
+		options.BlockCacheBytes < 0 ||
 		options.WALSyncInterval < 0 {
 		return ErrInvalidOptions
 	}

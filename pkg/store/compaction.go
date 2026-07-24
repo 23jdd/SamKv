@@ -98,6 +98,7 @@ func (st *StoreManger) Compact() (CompactionResult, error) {
 		if err != nil {
 			return result, err
 		}
+		newTable.SetBlockCache(st.blockCache)
 		result.Path = path
 	}
 
