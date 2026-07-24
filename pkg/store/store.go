@@ -247,7 +247,7 @@ func (st *StoreManger) scheduleFlushLocked() {
 }
 
 func (st *StoreManger) scheduleCompactionLocked() {
-	if st.options.CompactionThreshold <= 0 || len(st.sstables) < st.options.CompactionThreshold {
+	if st.options.CompactionThreshold <= 0 || st.nextCompactionLevelLocked() < 0 {
 		return
 	}
 	select {
@@ -443,11 +443,14 @@ func (st *StoreManger) runMaintenance() {
 				st.clearBackgroundError()
 			}
 		case <-st.compactionCh:
-			_, err := st.Compact()
+			_, err := st.CompactNextLevel()
 			if err != nil && !errors.Is(err, ErrStoreClosed) {
 				st.setBackgroundError(err)
 			} else if err == nil {
 				st.clearBackgroundError()
+				st.mu.Lock()
+				st.scheduleCompactionLocked()
+				st.mu.Unlock()
 			}
 		case <-st.done:
 			return
