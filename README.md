@@ -433,7 +433,7 @@ go run ./cmd/samkv-stress \
 1. 压力工具只构建一次，各场景顺序执行，避免不同场景争抢磁盘。
 2. 每轮使用新的临时数据目录，执行写入、Checkpoint、关闭、重开和完整校验。
 3. 每个场景运行 3 次，表格记录中位数；写吞吐范围是 3 次实测的最小值到最大值。
-4. `interval` 场景使用默认 4 KiB WAL Buffer 和 50 ms 周期；Buffer 满时立即批量刷盘。
+4. `interval` 场景使用默认 64 KiB WAL Buffer 和 50 ms 周期；Buffer 满时立即批量刷盘。
 5. 轻量矩阵 30 轮、大样本矩阵 15 轮，共 45 轮，全部通过重开持久化校验。
 
 测试结果仅代表这台机器上的本地文件系统，不是跨硬件的性能承诺。
@@ -444,26 +444,26 @@ go run ./cmd/samkv-stress \
 
 | 模式 | WAL 策略 | 记录数 | 并发 | Payload | 写吞吐中位数 | 3 轮范围 | Payload 吞吐 |
 | --- | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| KV | interval | 5,000 | 1 | random / 128 B | 60,202 ops/s | 45,389-61,798 | 7.35 MiB/s |
-| KV | interval | 5,000 | 8 | random / 128 B | 51,311 ops/s | 40,014-56,062 | 6.26 MiB/s |
-| KV | every-write | 1,000 | 1 | random / 128 B | 2,540 ops/s | 2,261-2,673 | 0.31 MiB/s |
-| KV | every-write | 1,000 | 8 | random / 128 B | 2,370 ops/s | 2,242-2,422 | 0.29 MiB/s |
-| 日志 | interval | 5,000 | 1 | random / 128 B | 4,100 ops/s | 3,865-4,162 | 0.50 MiB/s |
-| 日志 | interval | 5,000 | 8 | random / 128 B | 8,850 ops/s | 8,571-8,891 | 1.08 MiB/s |
-| 日志 | interval | 5,000 | 8 | repeated / 128 B | 9,593 ops/s | 9,438-9,958 | 1.17 MiB/s |
-| 日志 | interval | 5,000 | 8 | random / 1,024 B | 4,402 ops/s | 3,958-4,499 | 4.30 MiB/s |
-| 日志 | every-write | 1,000 | 1 | random / 128 B | 1,630 ops/s | 1,507-1,631 | 0.20 MiB/s |
-| 日志 | every-write | 1,000 | 8 | random / 128 B | 1,910 ops/s | 1,900-2,093 | 0.23 MiB/s |
+| KV | interval | 5,000 | 1 | random / 128 B | 431,012 ops/s | 419,375-458,476 | 52.61 MiB/s |
+| KV | interval | 5,000 | 8 | random / 128 B | 373,768 ops/s | 334,135-411,336 | 45.63 MiB/s |
+| KV | every-write | 1,000 | 1 | random / 128 B | 3,161 ops/s | 2,650-3,405 | 0.39 MiB/s |
+| KV | every-write | 1,000 | 8 | random / 128 B | 3,423 ops/s | 3,392-3,447 | 0.42 MiB/s |
+| 日志 | interval | 5,000 | 1 | random / 128 B | 6,212 ops/s | 6,056-6,363 | 0.76 MiB/s |
+| 日志 | interval | 5,000 | 8 | random / 128 B | 15,949 ops/s | 15,632-16,321 | 1.95 MiB/s |
+| 日志 | interval | 5,000 | 8 | repeated / 128 B | 15,169 ops/s | 14,288-16,225 | 1.85 MiB/s |
+| 日志 | interval | 5,000 | 8 | random / 1,024 B | 15,629 ops/s | 15,310-16,136 | 15.26 MiB/s |
+| 日志 | every-write | 1,000 | 1 | random / 128 B | 2,232 ops/s | 2,120-2,255 | 0.27 MiB/s |
+| 日志 | every-write | 1,000 | 8 | random / 128 B | 2,765 ops/s | 2,701-2,871 | 0.34 MiB/s |
 
 大样本矩阵用于验证吞吐稳定性、分阶段耗时和多 SSTable 恢复：
 
 | 模式 | WAL 策略 | 记录数 | Payload | 写吞吐中位数 | Checkpoint | 重开 | 校验 | 总耗时 | SSTable |
 | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| KV | interval | 50,000 | random / 128 B | 48,848 ops/s | 196.5 ms | 48.7 ms | 253.1 ms | 1,524.4 ms | 1 |
-| KV | every-write | 10,000 | random / 128 B | 3,351 ops/s | 42.4 ms | 27.9 ms | 43.2 ms | 3,105.2 ms | 1 |
-| 日志 | interval | 50,000 | random / 128 B | 9,246 ops/s | 213.5 ms | 71.1 ms | 455.6 ms | 6,149.4 ms | 1 |
-| 日志 | interval | 20,000 | random / 1,024 B | 5,231 ops/s | 49.2 ms | 66.5 ms | 216.2 ms | 4,156.1 ms | 2 |
-| 日志 | every-write | 10,000 | random / 128 B | 2,635 ops/s | 39.7 ms | 33.1 ms | 81.3 ms | 3,945.2 ms | 1 |
+| KV | interval | 50,000 | random / 128 B | 455,678 ops/s | 155.8 ms | 43.7 ms | 190.8 ms | 501.7 ms | 1 |
+| KV | every-write | 10,000 | random / 128 B | 3,349 ops/s | 43.2 ms | 20.7 ms | 53.6 ms | 3,114.9 ms | 1 |
+| 日志 | interval | 50,000 | random / 128 B | 13,159 ops/s | 172.0 ms | 53.6 ms | 380.7 ms | 4,412.4 ms | 1 |
+| 日志 | interval | 20,000 | random / 1,024 B | 15,636 ops/s | 52.7 ms | 65.3 ms | 218.4 ms | 1,608.1 ms | 2 |
+| 日志 | every-write | 10,000 | random / 128 B | 2,451 ops/s | 65.1 ms | 38.9 ms | 96.7 ms | 4,306.2 ms | 1 |
 
 总耗时包含写入、Checkpoint、两次关闭、重新打开和完整校验，因此不能用记录数除以总耗时替代纯写吞吐。
 
@@ -484,11 +484,11 @@ go test ./pkg/store \
 
 | 基准 | 中位数 | 内存分配 | 分配次数 |
 | --- | ---: | ---: | ---: |
-| Put / interval | 26.48 us/op | 899 B/op | 6 allocs/op |
-| Put / every-write | 300.50 us/op | 899 B/op | 6 allocs/op |
-| Get / MemTable | 41.47 ns/op | 0 B/op | 0 allocs/op |
-| Get / cached SSTable | 15.94 us/op | 29,168 B/op | 627 allocs/op |
-| Query / structured logs | 11.72 ms/op | 42,572,039 B/op | 19,032 allocs/op |
+| Put / interval | 3.36 us/op | 899 B/op | 7 allocs/op |
+| Put / every-write | 410.31 us/op | 898 B/op | 6 allocs/op |
+| Get / MemTable | 46.61 ns/op | 0 B/op | 0 allocs/op |
+| Get / cached SSTable | 16.68 us/op | 29,168 B/op | 627 allocs/op |
+| Query / structured logs | 10.39 ms/op | 42,571,867 B/op | 19,031 allocs/op |
 
 微基准直接循环单个 API，不包含压力工具的关闭重开和完整校验，因此两组数字用途不同。
 
@@ -496,9 +496,10 @@ go test ./pkg/store \
 
 - 更充分的测试发现了 WAL 周期模式的性能缺陷：4 KiB Buffer 满后曾等待下一次 50 ms ticker。改为满缓冲立即批量刷盘后，同一 5,000 条、8 并发、random/128 B 场景中，KV 从约 481 提升到 51,311 write ops/s，日志从约 361 提升到 8,850 write ops/s。
 - 旧的 `867.36 ops/s` 是 2,000 条高度可压缩日志的单次端到端结果，并混合了写入、Checkpoint 和校验，不能代表纯写性能，现已由分阶段矩阵取代。
-- 50,000 条随机日志在 interval 下保持约 9,246 write ops/s；同类 10,000 条 strict 日志约 2,635 write ops/s，说明每写 fsync 的持久性保证有明显成本。
+- 将默认 Buffer 从 4 KiB 调整为 64 KiB 后，50,000 条 KV interval 从约 48,848 提升到 455,678 write ops/s，50,000 条随机日志从约 9,246 提升到 13,159 write ops/s；strict 模式绕过普通 Buffer，因此吞吐量级基本不变。
+- 64 KiB 默认 Buffer 下，50,000 条随机日志 interval 达到约 13,159 write ops/s；同类 10,000 条 strict 日志约 2,451 write ops/s，说明每写 fsync 的持久性保证有明显成本。
 - KV 的 8 并发没有超过单并发，表明当前 Store 写入临界区仍是主要串行点；日志模式的编码/压缩工作使 8 并发有收益。
-- 1,024 B 随机日志的 ops/s 低于 128 B，但 Payload 吞吐达到约 5.11 MiB/s，并成功跨越 MemTable 阈值生成 2 个 SSTable。
+- 1,024 B 随机日志达到约 15.27 MiB/s，并成功跨越 MemTable 阈值生成 2 个 SSTable。
 - `Get / cached SSTable` 的 29 KiB/627 次分配以及日志 Query 的约 42.6 MiB/19k 次分配，是后续内存和查询优化的优先目标。
 
 ## 当前边界
