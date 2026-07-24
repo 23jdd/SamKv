@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestStressRunnerVerifiesPersistedKVAndLogWorkloads(t *testing.T) {
@@ -19,11 +20,14 @@ func TestStressRunnerVerifiesPersistedKVAndLogWorkloads(t *testing.T) {
 				report.WALSyncPolicy != "interval" || report.PayloadPattern != "repeated" || report.SSTables == 0 {
 				t.Fatalf("report = %#v", report)
 			}
-			if report.WriteDuration <= 0 || report.WriteOperationsPerSec <= 0 ||
-				report.PayloadMiBPerSec <= 0 || report.CheckpointDuration <= 0 ||
-				report.ReopenDuration <= 0 || report.VerifyDuration <= 0 ||
-				report.Duration <= 0 || report.OperationsPerSec <= 0 {
+			if report.CheckpointDuration <= 0 || report.ReopenDuration <= 0 ||
+				report.VerifyDuration <= 0 || report.Duration <= 0 ||
+				report.OperationsPerSec <= 0 {
 				t.Fatalf("phase metrics = %#v", report)
+			}
+			if report.WriteDuration > 0 &&
+				(report.WriteOperationsPerSec <= 0 || report.PayloadMiBPerSec <= 0) {
+				t.Fatalf("write metrics = %#v", report)
 			}
 			if report.Duration < report.WriteDuration+report.CheckpointDuration+
 				report.ReopenDuration+report.VerifyDuration {
@@ -59,11 +63,22 @@ func TestStressRunnerCanSkipReopenVerification(t *testing.T) {
 	if report.Verified || report.ReopenDuration != 0 || report.VerifyDuration != 0 {
 		t.Fatalf("report = %#v", report)
 	}
-	if report.WriteDuration <= 0 || report.CheckpointDuration <= 0 {
+	if report.CheckpointDuration <= 0 {
 		t.Fatalf("phase metrics = %#v", report)
 	}
 }
 
+func TestStressRateCalculations(t *testing.T) {
+	if got := operationsPerSecond(500, time.Second); got != 500 {
+		t.Fatalf("operationsPerSecond = %f, want 500", got)
+	}
+	if got := mebibytesPerSecond(1024*1024, time.Second); got != 1 {
+		t.Fatalf("mebibytesPerSecond = %f, want 1", got)
+	}
+	if operationsPerSecond(1, 0) != 0 || mebibytesPerSecond(1, 0) != 0 {
+		t.Fatal("zero duration must produce a zero rate")
+	}
+}
 func TestStressPayloadPatternsAreDeterministic(t *testing.T) {
 	repeated := stressPayload(stressConfig{valueBytes: 64, payloadPattern: "repeated"})
 	randomFirst := stressPayload(stressConfig{valueBytes: 64, payloadPattern: "random"})

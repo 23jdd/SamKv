@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	DefaultSize   = 4 * 1024 // 4 KiB
+	DefaultSize   = 64 * 1024 // 64 KiB
 	FlushInterval = 50 * time.Millisecond
 )
 

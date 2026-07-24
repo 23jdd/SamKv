@@ -17,8 +17,9 @@ const (
 )
 
 const (
-	headerSize       = 8 // CRC32 + PayloadLength
-	fixedPayloadSize = 17
+	headerSize          = 8 // CRC32 + PayloadLength
+	fixedPayloadSize    = 17
+	minRecordBufferSize = 4 * 1024 // 恢复小记录时仍从 4 KiB 池开始复用。
 )
 
 var (
@@ -29,7 +30,7 @@ var (
 
 // walRecordBufferPool 复用 WAL 恢复读取缓冲；大于 1 MiB 的记录读取后直接释放。
 var walRecordBufferPool = bufferpool.NewTieredPool(
-	DefaultSize,
+	minRecordBufferSize,
 	16*1024,
 	64*1024,
 	256*1024,

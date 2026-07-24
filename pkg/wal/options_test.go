@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+func TestDefaultOptionsUses64KiBBuffer(t *testing.T) {
+	options := DefaultOptions()
+	if options.BufferSize != 64*1024 {
+		t.Fatalf("BufferSize = %d, want %d", options.BufferSize, 64*1024)
+	}
+}
+
 func TestNewWithOptionsRejectsInvalidConfiguration(t *testing.T) {
 	tests := []Options{
 		{BufferSize: 0, SyncPolicy: SyncInterval, SyncInterval: time.Second},
