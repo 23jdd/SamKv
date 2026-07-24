@@ -32,7 +32,7 @@ func (s *SStable) Verify() (SSTableVerification, error) {
 	}
 	records, err := s.AllRecords()
 	if err != nil {
-		return result, fmt.Errorf("%w: %s: %v", ErrSSTableCorrupt, s.Path(), err)
+		return result, fmt.Errorf("%w: %s: %w", ErrSSTableCorrupt, s.Path(), err)
 	}
 	result.Records = len(records)
 	if uint64(len(records)) != s.meta.RecordCount {
