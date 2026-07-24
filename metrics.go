@@ -12,7 +12,7 @@ import (
 
 const prometheusContentType = "text/plain; version=0.0.4; charset=utf-8"
 
-// MetricsStore ????????? Store ?????
+// MetricsStore 定义指标接口读取 Store 状态所需的能力。
 type MetricsStore interface {
 	Stats() store.Stats
 }

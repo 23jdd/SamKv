@@ -1,9 +1,9 @@
 package store
 
-// CurrentSSTableVersion ??? SSTable ??????????
+// CurrentSSTableVersion 返回当前写入的 SSTable 格式版本。
 const CurrentSSTableVersion = currentSSTableVersion
 
-// UpgradeResult ?????????????????????
+// UpgradeResult 描述一次存储格式升级的结果。
 type UpgradeResult struct {
 	RewrittenTables int
 	OutputPath      string
@@ -11,7 +11,7 @@ type UpgradeResult struct {
 	ManifestVersion uint32
 }
 
-// UpgradeFormat ????????? Checkpoint???? SSTable ????????
+// UpgradeFormat 先执行 Checkpoint，再把旧版 SSTable 重写为当前格式。
 func (st *StoreManger) UpgradeFormat() (UpgradeResult, error) {
 	if _, err := st.Checkpoint(); err != nil {
 		return UpgradeResult{}, err

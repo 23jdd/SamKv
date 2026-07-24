@@ -17,7 +17,7 @@ type levelCompactionSelection struct {
 	indexes     []int
 }
 
-// CompactNextLevel ??????????????????????????
+// CompactNextLevel 执行当前最需要整理的一层增量 Compaction。
 func (st *StoreManger) CompactNextLevel() (CompactionResult, error) {
 	st.mu.RLock()
 	level := st.nextCompactionLevelLocked()
@@ -28,7 +28,7 @@ func (st *StoreManger) CompactNextLevel() (CompactionResult, error) {
 	return st.CompactLevel(level)
 }
 
-// CompactLevel ??? source level ???? key ????? SSTable?
+// CompactLevel 合并 source level 的候选文件及下一层中 key 范围重叠的 SSTable。
 func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 	st.maintenanceMu.Lock()
 	defer st.maintenanceMu.Unlock()

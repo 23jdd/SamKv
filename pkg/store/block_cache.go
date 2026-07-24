@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// BlockCacheStats ? Block Cache ?????????????
+// BlockCacheStats 是 Block Cache 的只读运行统计。
 type BlockCacheStats struct {
 	Hits      uint64
 	Misses    uint64
@@ -26,7 +26,7 @@ type blockCacheEntry struct {
 	data []byte
 }
 
-// BlockCache ?????????? SSTable Block??? LRU ??????
+// BlockCache 是按字节容量限制的并发安全 SSTable Block LRU 缓存。
 type BlockCache struct {
 	mu        sync.Mutex
 	capacity  int64
@@ -38,7 +38,7 @@ type BlockCache struct {
 	evictions uint64
 }
 
-// NewBlockCache ????????? Block Cache?capacityBytes <= 0 ?????
+// NewBlockCache 创建共享 Block Cache；capacityBytes <= 0 时禁用缓存。
 func NewBlockCache(capacityBytes int64) *BlockCache {
 	return &BlockCache{
 		capacity: capacityBytes,
@@ -111,7 +111,7 @@ func (cache *BlockCache) removeElement(element *list.Element) {
 	cache.lru.Remove(element)
 }
 
-// Stats ??????/???/????????????
+// Stats 返回命中、未命中、淘汰数量和当前占用。
 func (cache *BlockCache) Stats() BlockCacheStats {
 	if cache == nil {
 		return BlockCacheStats{}

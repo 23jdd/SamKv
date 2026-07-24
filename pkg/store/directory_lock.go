@@ -9,7 +9,7 @@ import (
 
 var ErrDataDirLocked = errors.New("store: data directory is locked")
 
-// directoryLock ? Store ????????????????????
+// directoryLock 在 Store 生命周期内持有数据目录的进程级排他锁。
 type directoryLock struct {
 	file *os.File
 }

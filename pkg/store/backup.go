@@ -18,14 +18,14 @@ const (
 	CurrentBackupVersion uint32 = 1
 )
 
-// BackupFile ????????? SHA-256????????????
+// BackupFile 记录备份文件的大小和 SHA-256 校验值。
 type BackupFile struct {
 	Name   string `json:"name"`
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
 }
 
-// BackupMetadata ?????????? Store ???
+// BackupMetadata 描述一个可验证的 Store 备份集。
 type BackupMetadata struct {
 	FormatVersion   uint32       `json:"format_version"`
 	CreatedAt       time.Time    `json:"created_at"`
@@ -34,7 +34,7 @@ type BackupMetadata struct {
 	Files           []BackupFile `json:"files"`
 }
 
-// Backup ??? Checkpoint????????????????????????
+// Backup 先执行 Checkpoint，再把一致的数据文件复制到新的备份目录。
 func (st *StoreManger) Backup(destination string) (BackupMetadata, error) {
 	if _, err := st.Checkpoint(); err != nil {
 		return BackupMetadata{}, err
@@ -119,7 +119,7 @@ func (st *StoreManger) Backup(destination string) (BackupMetadata, error) {
 	return metadata, nil
 }
 
-// VerifyBackup ???????????????Manifest ??? SSTable ???
+// VerifyBackup 校验备份文件摘要、Manifest 引用和 SSTable 完整性。
 func VerifyBackup(source string) (BackupMetadata, error) {
 	data, err := os.ReadFile(filepath.Join(source, backupMetadataFile))
 	if err != nil {
@@ -172,7 +172,7 @@ func VerifyBackup(source string) (BackupMetadata, error) {
 	return metadata, nil
 }
 
-// RestoreBackup ??????????????????????
+// RestoreBackup 将校验通过的备份恢复到一个尚不存在的数据目录。
 func RestoreBackup(source, destination string) error {
 	metadata, err := VerifyBackup(source)
 	if err != nil {

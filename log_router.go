@@ -22,7 +22,7 @@ const (
 	maxQueryLimit      = 10_000
 )
 
-// LogStore ??????? HTTP ?????????
+// LogStore 定义结构化日志 HTTP 接口依赖的存储能力。
 type LogStore interface {
 	WriteLog(entry store.LogEntry) (uint64, error)
 	WriteLogs(entries []store.LogEntry) ([]uint64, error)

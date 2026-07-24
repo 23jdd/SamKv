@@ -7,7 +7,7 @@ import (
 
 var ErrSSTableCorrupt = errors.New("sstable: corruption detected")
 
-// SSTableVerification ??? SSTable ?????????
+// SSTableVerification 描述单个 SSTable 的完整性校验结果。
 type SSTableVerification struct {
 	Path       string
 	Version    uint32
@@ -15,7 +15,7 @@ type SSTableVerification struct {
 	Records    int
 }
 
-// StoreVerification ??? Store ?? SSTable ??????
+// StoreVerification 汇总 Store 中全部 SSTable 的校验结果。
 type StoreVerification struct {
 	Tables  int
 	Blocks  int
@@ -23,7 +23,7 @@ type StoreVerification struct {
 	Results []SSTableVerification
 }
 
-// Verify ??????? DataBlock?????????????? BloomFilter?
+// Verify 校验全部 DataBlock、记录顺序、元数据范围和 BloomFilter。
 func (s *SStable) Verify() (SSTableVerification, error) {
 	result := SSTableVerification{
 		Path:       s.Path(),
@@ -52,7 +52,7 @@ func (s *SStable) Verify() (SSTableVerification, error) {
 	return result, nil
 }
 
-// Verify ?????? Store ?????? SSTable?
+// Verify 校验当前 Store 引用的全部 SSTable。
 func (st *StoreManger) Verify() (StoreVerification, error) {
 	st.mu.RLock()
 	if st.closed {

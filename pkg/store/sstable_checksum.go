@@ -13,7 +13,7 @@ var (
 	blockChecksumTable = crc32.MakeTable(crc32.Castagnoli)
 )
 
-// encodeChecksummedBlock ? block payload ??? CRC32-Castagnoli?
+// encodeChecksummedBlock 在 block payload 后追加 CRC32-Castagnoli 校验值。
 func encodeChecksummedBlock(payload []byte) []byte {
 	encoded := make([]byte, len(payload)+blockChecksumSize)
 	copy(encoded, payload)
@@ -21,7 +21,7 @@ func encodeChecksummedBlock(payload []byte) []byte {
 	return encoded
 }
 
-// verifyChecksummedBlock ?? block ???????????????? payload?
+// verifyChecksummedBlock 校验 block 尾部的校验值并返回原始 payload。
 func verifyChecksummedBlock(encoded []byte) ([]byte, error) {
 	if len(encoded) < blockChecksumSize {
 		return nil, ErrInvalidSSTable
