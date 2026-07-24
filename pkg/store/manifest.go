@@ -9,14 +9,18 @@ import (
 	"strings"
 )
 
-const manifestFileName = "MANIFEST"
+const (
+	manifestFileName              = "MANIFEST"
+	CurrentManifestVersion uint32 = 1
+)
 
 // Manifest 记录当前 Store 认可的 SSTable 列表和下一个文件编号。
 // WAL 负责恢复尚未 checkpoint 的数据，Manifest 负责恢复已经落盘成 SSTable 的数据。
 type Manifest struct {
-	NextFileID   uint64            `json:"next_file_id"`
-	LastSequence uint64            `json:"last_sequence"`
-	SSTables     []ManifestSSTable `json:"sstables"`
+	FormatVersion uint32            `json:"format_version"`
+	NextFileID    uint64            `json:"next_file_id"`
+	LastSequence  uint64            `json:"last_sequence"`
+	SSTables      []ManifestSSTable `json:"sstables"`
 }
 
 // ManifestSSTable 是 Manifest 中的一条 SSTable 元数据。
@@ -24,6 +28,7 @@ type Manifest struct {
 type ManifestSSTable struct {
 	File             string            `json:"file"`
 	Level            int               `json:"level"`
+	FormatVersion    uint32            `json:"format_version,omitempty"`
 	MinKey           string            `json:"min_key"`
 	MaxKey           string            `json:"max_key"`
 	RecordCount      uint64            `json:"record_count"`
@@ -34,7 +39,7 @@ type ManifestSSTable struct {
 }
 
 func newManifest() Manifest {
-	return Manifest{NextFileID: 1}
+	return Manifest{FormatVersion: CurrentManifestVersion, NextFileID: 1}
 }
 
 func manifestPath(dir string) string {
@@ -76,6 +81,9 @@ func readManifest(path string) (Manifest, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("store: decode manifest: %w", err)
 	}
+	if manifest.FormatVersion == 0 {
+		manifest.FormatVersion = 1
+	}
 	if manifest.NextFileID == 0 {
 		manifest.NextFileID = 1
 	}
@@ -86,6 +94,9 @@ func readManifest(path string) (Manifest, error) {
 }
 
 func validateManifest(manifest Manifest) error {
+	if manifest.FormatVersion > CurrentManifestVersion {
+		return fmt.Errorf("store: unsupported manifest version %d", manifest.FormatVersion)
+	}
 	seen := make(map[string]struct{}, len(manifest.SSTables))
 	for _, entry := range manifest.SSTables {
 		if entry.File == "" || filepath.Base(entry.File) != entry.File || !strings.HasSuffix(entry.File, ".sst") {
@@ -93,6 +104,9 @@ func validateManifest(manifest Manifest) error {
 		}
 		if entry.Level < 0 {
 			return fmt.Errorf("store: invalid manifest level %d", entry.Level)
+		}
+		if entry.FormatVersion > currentSSTableVersion {
+			return fmt.Errorf("store: unsupported sstable version %d", entry.FormatVersion)
 		}
 		if _, ok := seen[entry.File]; ok {
 			return fmt.Errorf("store: duplicate manifest sstable %q", entry.File)
@@ -105,6 +119,9 @@ func validateManifest(manifest Manifest) error {
 // saveManifest 先完整写入临时文件，再发布为 MANIFEST。
 // Windows 不能直接用 rename 覆盖已有文件，因此使用 .bak 保留旧版本并支持崩溃恢复。
 func saveManifest(dir string, manifest Manifest) error {
+	if manifest.FormatVersion == 0 {
+		manifest.FormatVersion = 1
+	}
 	if manifest.NextFileID == 0 {
 		manifest.NextFileID = 1
 	}
@@ -173,6 +190,7 @@ func manifestEntryFromSSTable(path string, table *SStable) ManifestSSTable {
 	return ManifestSSTable{
 		File:             filepath.Base(path),
 		Level:            0,
+		FormatVersion:    table.Version(),
 		MinKey:           meta.MinKey,
 		MaxKey:           meta.MaxKey,
 		RecordCount:      meta.RecordCount,

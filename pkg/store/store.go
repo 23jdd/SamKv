@@ -546,7 +546,9 @@ func (st *StoreManger) loadSSTablesFromManifest(manifest Manifest) error {
 
 // manifestFromSSTables 用于兼容没有 MANIFEST 的旧目录。
 func manifestFromSSTables(nextFileID uint64, paths []string, tables []*SStable) Manifest {
-	manifest := Manifest{NextFileID: nextFileID, SSTables: make([]ManifestSSTable, 0, len(tables))}
+	manifest := newManifest()
+	manifest.NextFileID = nextFileID
+	manifest.SSTables = make([]ManifestSSTable, 0, len(tables))
 	for i, table := range tables {
 		manifest.SSTables = append(manifest.SSTables, manifestEntryFromSSTable(paths[i], table))
 	}
