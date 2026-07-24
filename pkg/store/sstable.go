@@ -29,15 +29,16 @@ const (
 	// ReStartInterval 表示 DataBlock 前缀压缩时，每隔多少条记录写一个完整 key。
 	ReStartInterval = 16
 
-	sstableVersion       uint32 = 1
-	defaultDataBlockSize        = 4 * 1024
-	magicSize                   = len(Magic)
-	versionOffset               = magicSize
-	metaOffsetOffset            = versionOffset + 4
-	metaSizeOffset              = metaOffsetOffset + 8
-	indexOffsetOffset           = metaSizeOffset + 8
-	indexSizeOffset             = indexOffsetOffset + 8
-	footerSize                  = indexSizeOffset + 8
+	legacySSTableVersion  uint32 = 1
+	currentSSTableVersion uint32 = 2
+	defaultDataBlockSize         = 4 * 1024
+	magicSize                    = len(Magic)
+	versionOffset                = magicSize
+	metaOffsetOffset             = versionOffset + 4
+	metaSizeOffset               = metaOffsetOffset + 8
+	indexOffsetOffset            = metaSizeOffset + 8
+	indexSizeOffset              = indexOffsetOffset + 8
+	footerSize                   = indexSizeOffset + 8
 )
 
 var (
@@ -96,6 +97,7 @@ type MetaBlock struct {
 // Footer 固定大小，永远写在 SSTable 文件末尾。
 // 打开文件时先读取 Footer，再找到 MetaBlock 和 IndexBlock。
 type Footer struct {
+	Version     uint32
 	MetaHandle  BlockHandle
 	IndexHandle BlockHandle
 }
@@ -103,13 +105,14 @@ type Footer struct {
 // SStable 表示一张不可变的 Sorted String Table。
 // 内存构建时 rs 保存排序后的记录；从磁盘打开时主要依赖 file、index 和 meta 查询。
 type SStable struct {
-	path   string
-	file   *os.File
-	rs     []Record
-	bf     *BloomFilter
-	index  []IndexEntry
-	meta   MetaBlock
-	footer Footer
+	path    string
+	file    *os.File
+	version uint32
+	rs      []Record
+	bf      *BloomFilter
+	index   []IndexEntry
+	meta    MetaBlock
+	footer  Footer
 }
 
 // NewSStable 在内存中创建一张 SSTable 描述对象。
@@ -161,7 +164,8 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := writeAll(file, blockData); err != nil {
+		encodedBlock := encodeChecksummedBlock(blockData)
+		if err := writeAll(file, encodedBlock); err != nil {
 			return nil, err
 		}
 		index = append(index, IndexEntry{
@@ -169,10 +173,10 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 			LastKey:  blockRecords[len(blockRecords)-1].Key,
 			Handle: BlockHandle{
 				Offset: offset,
-				Size:   uint64(len(blockData)),
+				Size:   uint64(len(encodedBlock)),
 			},
 		})
-		offset += uint64(len(blockData))
+		offset += uint64(len(encodedBlock))
 	}
 
 	meta, err := buildSSTableMeta(records, bf)
@@ -183,23 +187,29 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 	if err != nil {
 		return nil, err
 	}
-	metaHandle := BlockHandle{Offset: offset, Size: uint64(len(metaData))}
-	if err := writeAll(file, metaData); err != nil {
+	encodedMeta := encodeChecksummedBlock(metaData)
+	metaHandle := BlockHandle{Offset: offset, Size: uint64(len(encodedMeta))}
+	if err := writeAll(file, encodedMeta); err != nil {
 		return nil, err
 	}
-	offset += uint64(len(metaData))
+	offset += uint64(len(encodedMeta))
 
 	indexData, err := encodeIndexBlock(index)
 	if err != nil {
 		return nil, err
 	}
-	indexHandle := BlockHandle{Offset: offset, Size: uint64(len(indexData))}
-	if err := writeAll(file, indexData); err != nil {
+	encodedIndex := encodeChecksummedBlock(indexData)
+	indexHandle := BlockHandle{Offset: offset, Size: uint64(len(encodedIndex))}
+	if err := writeAll(file, encodedIndex); err != nil {
 		return nil, err
 	}
-	offset += uint64(len(indexData))
+	offset += uint64(len(encodedIndex))
 
-	footer := Footer{MetaHandle: metaHandle, IndexHandle: indexHandle}
+	footer := Footer{
+		Version:     currentSSTableVersion,
+		MetaHandle:  metaHandle,
+		IndexHandle: indexHandle,
+	}
 	footerData := encodeFooter(footer)
 	if err := writeAll(file, footerData); err != nil {
 		return nil, err
@@ -216,12 +226,13 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 	ok = true
 
 	return &SStable{
-		path:   path,
-		rs:     records,
-		bf:     bf,
-		index:  index,
-		meta:   meta,
-		footer: footer,
+		path:    path,
+		version: currentSSTableVersion,
+		rs:      records,
+		bf:      bf,
+		index:   index,
+		meta:    meta,
+		footer:  footer,
 	}, nil
 }
 
@@ -261,7 +272,7 @@ func OpenSStable(path string) (*SStable, error) {
 		return nil, err
 	}
 
-	metaData, err := readBlock(file, footer.MetaHandle)
+	metaData, err := readBlock(file, footer.MetaHandle, footer.Version >= currentSSTableVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +282,7 @@ func OpenSStable(path string) (*SStable, error) {
 		return nil, err
 	}
 
-	indexData, err := readBlock(file, footer.IndexHandle)
+	indexData, err := readBlock(file, footer.IndexHandle, footer.Version >= currentSSTableVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -288,12 +299,13 @@ func OpenSStable(path string) (*SStable, error) {
 
 	ok = true
 	return &SStable{
-		path:   path,
-		file:   file,
-		bf:     meta.Filter,
-		index:  index,
-		meta:   meta,
-		footer: footer,
+		path:    path,
+		file:    file,
+		version: footer.Version,
+		bf:      meta.Filter,
+		index:   index,
+		meta:    meta,
+		footer:  footer,
 	}, nil
 }
 
@@ -342,7 +354,7 @@ func (s *SStable) GetRecord(key string) (Record, bool, error) {
 	if !ok {
 		return Record{}, false, nil
 	}
-	blockData, err := readBlock(s.file, entry.Handle)
+	blockData, err := readBlock(s.file, entry.Handle, s.version >= currentSSTableVersion)
 	if err != nil {
 		return Record{}, false, err
 	}
@@ -364,6 +376,17 @@ func (s *SStable) GetRecord(key string) (Record, bool, error) {
 func (s *SStable) Contains(key string) (bool, error) {
 	_, ok, err := s.Get(key)
 	return ok, err
+}
+
+// Version 返回当前 SSTable 的磁盘格式版本。
+func (s *SStable) Version() uint32 {
+	if s == nil {
+		return 0
+	}
+	if s.version == 0 {
+		return currentSSTableVersion
+	}
+	return s.version
 }
 
 // Meta 返回 SSTable 的元数据快照。
@@ -779,7 +802,11 @@ func decodeIndexBlock(data []byte) ([]IndexEntry, error) {
 func encodeFooter(footer Footer) []byte {
 	data := make([]byte, footerSize)
 	copy(data[:magicSize], []byte(Magic))
-	binary.LittleEndian.PutUint32(data[versionOffset:], sstableVersion)
+	version := footer.Version
+	if version == 0 {
+		version = currentSSTableVersion
+	}
+	binary.LittleEndian.PutUint32(data[versionOffset:], version)
 	binary.LittleEndian.PutUint64(data[metaOffsetOffset:], footer.MetaHandle.Offset)
 	binary.LittleEndian.PutUint64(data[metaSizeOffset:], footer.MetaHandle.Size)
 	binary.LittleEndian.PutUint64(data[indexOffsetOffset:], footer.IndexHandle.Offset)
@@ -796,10 +823,11 @@ func decodeFooter(data []byte) (Footer, error) {
 		return Footer{}, fmt.Errorf("%w: bad magic", ErrInvalidSSTable)
 	}
 	version := binary.LittleEndian.Uint32(data[versionOffset:])
-	if version != sstableVersion {
+	if version < legacySSTableVersion || version > currentSSTableVersion {
 		return Footer{}, fmt.Errorf("%w: unsupported version %d", ErrInvalidSSTable, version)
 	}
 	return Footer{
+		Version: version,
 		MetaHandle: BlockHandle{
 			Offset: binary.LittleEndian.Uint64(data[metaOffsetOffset:]),
 			Size:   binary.LittleEndian.Uint64(data[metaSizeOffset:]),
@@ -835,7 +863,7 @@ func validateBlockHandle(handle BlockHandle, limit uint64) error {
 
 // readBlock 根据 BlockHandle 从文件中读取完整 block。
 // 返回的缓冲来自分级池，调用方解码完成后必须调用 releaseBlock。
-func readBlock(file *os.File, handle BlockHandle) ([]byte, error) {
+func readBlock(file *os.File, handle BlockHandle, checksummed bool) ([]byte, error) {
 	if handle.Size > uint64(int(^uint(0)>>1)) {
 		return nil, errors.New("sstable: block too large")
 	}
@@ -848,6 +876,14 @@ func readBlock(file *os.File, handle BlockHandle) ([]byte, error) {
 	if n != len(data) {
 		sstableBlockBufferPool.Put(data)
 		return nil, io.ErrUnexpectedEOF
+	}
+	if checksummed {
+		payload, err := verifyChecksummedBlock(data)
+		if err != nil {
+			sstableBlockBufferPool.Put(data)
+			return nil, err
+		}
+		return payload, nil
 	}
 	return data, nil
 }

@@ -28,7 +28,7 @@ func (s *SStable) Scan(startKey, endKey string) ([]Record, error) {
 			break
 		}
 
-		blockData, err := readBlock(s.file, entry.Handle)
+		blockData, err := readBlock(s.file, entry.Handle, s.version >= currentSSTableVersion)
 		if err != nil {
 			return nil, err
 		}
