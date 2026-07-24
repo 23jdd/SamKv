@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultAddress        = "127.0.0.1"
+	defaultAddress        = "localhost"
 	defaultPort           = 9999
 	defaultRequestTimeout = 10 * time.Second
 	maxResponseBytes      = 64 << 20

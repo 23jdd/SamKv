@@ -166,7 +166,7 @@ samctl query -limit 100 '"request failed"{app=api,level=ERROR}[1h]'
 
 `log-batch` 的文件可以是 `[{"labels":{"app":"api"},"message":"..."}]`，也可以是 HTTP API 同款的 `{"entries":[...]}`。
 
-默认连接 `127.0.0.1:9999`。也可以指定地址、端口和超时：
+默认连接 `localhost:9999`。也可以指定地址、端口和超时：
 
 ```bash
 samctl get -a 127.0.0.1 -p 9999 -timeout 5s app/config
