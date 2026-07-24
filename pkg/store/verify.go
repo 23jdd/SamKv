@@ -30,7 +30,7 @@ func (s *SStable) Verify() (SSTableVerification, error) {
 		Version:    s.Version(),
 		DataBlocks: len(s.index),
 	}
-	records, err := s.AllRecords()
+	records, err := s.scan("", "", false)
 	if err != nil {
 		return result, fmt.Errorf("%w: %s: %w", ErrSSTableCorrupt, s.Path(), err)
 	}

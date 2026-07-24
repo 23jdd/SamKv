@@ -362,12 +362,12 @@ func (s *SStable) GetRecord(key string) (Record, bool, error) {
 	if !ok {
 		return Record{}, false, nil
 	}
-	blockData, err := readBlock(s.file, entry.Handle, s.version >= currentSSTableVersion)
+	blockData, release, err := s.readDataBlock(entry.Handle, true)
 	if err != nil {
 		return Record{}, false, err
 	}
 	records, err := DecodeDataBlock(blockData)
-	releaseBlock(blockData)
+	release()
 	if err != nil {
 		return Record{}, false, err
 	}
@@ -378,6 +378,28 @@ func (s *SStable) GetRecord(key string) (Record, bool, error) {
 		return records[idx], true, nil
 	}
 	return Record{}, false, nil
+}
+
+func (s *SStable) readDataBlock(handle BlockHandle, useCache bool) ([]byte, func(), error) {
+	key := blockCacheKey{
+		path:    s.path,
+		offset:  handle.Offset,
+		size:    handle.Size,
+		version: s.Version(),
+	}
+	if useCache {
+		if data, ok := s.cache.get(key); ok {
+			return data, func() {}, nil
+		}
+	}
+	data, err := readBlock(s.file, handle, s.version >= currentSSTableVersion)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	if useCache {
+		s.cache.put(key, data)
+	}
+	return data, func() { releaseBlock(data) }, nil
 }
 
 // Contains 判断 key 是否存在于当前 SSTable。

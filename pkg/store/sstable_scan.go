@@ -5,6 +5,10 @@ import "sort"
 // Scan 按 key 范围读取 SSTable 中的原始记录。
 // 范围采用 [startKey, endKey) 语义；空边界表示不限制，结果包含墓碑。
 func (s *SStable) Scan(startKey, endKey string) ([]Record, error) {
+	return s.scan(startKey, endKey, true)
+}
+
+func (s *SStable) scan(startKey, endKey string, useCache bool) ([]Record, error) {
 	if s == nil {
 		return nil, ErrInvalidSSTable
 	}
@@ -28,12 +32,12 @@ func (s *SStable) Scan(startKey, endKey string) ([]Record, error) {
 			break
 		}
 
-		blockData, err := readBlock(s.file, entry.Handle, s.version >= currentSSTableVersion)
+		blockData, release, err := s.readDataBlock(entry.Handle, useCache)
 		if err != nil {
 			return nil, err
 		}
 		blockRecords, err := DecodeDataBlock(blockData)
-		releaseBlock(blockData)
+		release()
 		if err != nil {
 			return nil, err
 		}
