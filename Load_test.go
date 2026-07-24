@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,4 +36,46 @@ func TestLoadReadsDurabilityCacheAndLevelSettings(t *testing.T) {
 		options.WALSyncInterval != 3*time.Millisecond {
 		t.Fatalf("Load() = %#v", options)
 	}
+}
+
+func TestLoadEnvFileReadsCustomPath(t *testing.T) {
+	unsetenvForTest(t, "MemTableLimit")
+	unsetenvForTest(t, "Retention")
+	path := filepath.Join(t.TempDir(), "custom.env")
+	if err := os.WriteFile(path, []byte("MemTableLimit=2048\nRetention=6\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	options := LoadEnvFile(path)
+	if options.MemTableLimit != 2048 || options.Retention != 6*time.Hour {
+		t.Fatalf("LoadEnvFile() = %#v", options)
+	}
+}
+
+func TestParseServerConfigAcceptsEnvFile(t *testing.T) {
+	config, err := parseServerConfig([]string{"-f", "custom.env"})
+	if err != nil {
+		t.Fatalf("parseServerConfig() error = %v", err)
+	}
+	if config.envFile != "custom.env" {
+		t.Fatalf("envFile=%q, want custom.env", config.envFile)
+	}
+	if _, err := parseServerConfig([]string{"-f", "custom.env", "extra"}); err == nil {
+		t.Fatal("parseServerConfig() succeeded with unexpected argument")
+	}
+}
+
+func unsetenvForTest(t *testing.T, key string) {
+	t.Helper()
+	old, ok := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if ok {
+			_ = os.Setenv(key, old)
+			return
+		}
+		_ = os.Unsetenv(key)
+	})
 }

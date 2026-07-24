@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,14 +23,22 @@ const (
 	shutdownTimeout      = 10 * time.Second
 )
 
+type serverConfig struct {
+	envFile string
+}
+
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run() (returnErr error) {
-	options := Load()
+func run(args []string) (returnErr error) {
+	config, err := parseServerConfig(args)
+	if err != nil {
+		return err
+	}
+	options := LoadEnvFile(config.envFile)
 	dir := os.Getenv("dir")
 	if dir == "" {
 		dir = defaultDataDir
@@ -70,6 +80,19 @@ func run() (returnErr error) {
 		shutdownErr = errors.Join(shutdownErr, server.Close())
 	}
 	return errors.Join(shutdownErr, <-serveErr)
+}
+
+func parseServerConfig(args []string) (serverConfig, error) {
+	config := serverConfig{envFile: ".env"}
+	flags := flag.NewFlagSet("samkv", flag.ContinueOnError)
+	flags.StringVar(&config.envFile, "f", config.envFile, ".env file path")
+	if err := flags.Parse(args); err != nil {
+		return serverConfig{}, err
+	}
+	if flags.NArg() != 0 {
+		return serverConfig{}, fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	return config, nil
 }
 
 func loadServerAddress() (string, int, error) {

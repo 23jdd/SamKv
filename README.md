@@ -327,6 +327,8 @@ start, end := query.TimeRange(time.Now().UTC())
 
 服务从 `.env` 和同名进程环境变量读取配置，进程环境变量优先。`Retention` 在 `.env` 中使用小时数，`WALSyncInterval` 使用 Go duration：
 
+如需指定其他 env 文件，使用 `samkv -f ./custom.env`。
+
 ```dotenv
 dir=./logs
 Address=0.0.0.0

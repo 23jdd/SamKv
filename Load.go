@@ -11,7 +11,13 @@ import (
 
 // Load 从 .env 和进程环境读取服务配置；无效或缺失值保留库默认值。
 func Load() store.Options {
-	_ = godotenv.Load(".env")
+	return LoadEnvFile(".env")
+}
+
+func LoadEnvFile(path string) store.Options {
+	if path != "" {
+		_ = godotenv.Load(path)
+	}
 	options := store.DefaultOptions()
 
 	if value, err := strconv.Atoi(os.Getenv("MemTableLimit")); err == nil {
