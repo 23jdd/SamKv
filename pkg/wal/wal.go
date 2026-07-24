@@ -21,6 +21,7 @@ type WalWriter struct {
 // WalManger 管理 WAL 的内存缓冲、顺序写入和后台刷盘。
 type WalManger struct {
 	Dir          string
+	options      Options
 	buffer       []byte
 	flushBatch   []byte
 	activeWriter *WalWriter
@@ -34,8 +35,16 @@ type WalManger struct {
 	backgroundWG sync.WaitGroup
 }
 
-// New 打开或创建 wal.log，并启动后台刷盘协程。
+// New 使用默认选项打开或创建 wal.log。
 func New(dir string) (*WalManger, error) {
+	return NewWithOptions(dir, DefaultOptions())
+}
+
+// NewWithOptions 打开或创建 wal.log，并按给定持久性策略启动后台任务。
+func NewWithOptions(dir string, options Options) (*WalManger, error) {
+	if err := validateOptions(options); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
@@ -51,8 +60,9 @@ func New(dir string) (*WalManger, error) {
 
 	wm := &WalManger{
 		Dir:          dir,
-		buffer:       make([]byte, 0, DefaultSize),
-		flushBatch:   make([]byte, 0, DefaultSize),
+		options:      options,
+		buffer:       make([]byte, 0, options.BufferSize),
+		flushBatch:   make([]byte, 0, options.BufferSize),
 		activeWriter: &WalWriter{file: file},
 		done:         make(chan struct{}),
 	}
@@ -77,7 +87,7 @@ func (wm *WalManger) AppendLog(data []byte) error {
 	}
 	wm.bufmu.Unlock()
 
-	if len(data) > DefaultSize {
+	if len(data) > wm.options.BufferSize {
 		wm.writeMu.Lock()
 		defer wm.writeMu.Unlock()
 
@@ -170,7 +180,11 @@ func (wm *WalManger) writeAndSyncLocked(data []byte) error {
 func (wm *WalManger) Background() {
 	defer wm.backgroundWG.Done()
 
-	ticker := time.NewTicker(FlushInterval)
+	interval := wm.options.SyncInterval
+	if interval <= 0 {
+		interval = FlushInterval
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
