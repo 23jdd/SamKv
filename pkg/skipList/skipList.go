@@ -48,7 +48,7 @@ type SkipList[K any, V any] struct {
 	// 当前实际使用的层数，最少为 1。
 	level int
 
-	maxLevel   int
+	maxLevel    int
 	probability float64
 
 	length int
