@@ -70,7 +70,12 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 	if err := validateOptions(options); err != nil {
 		return nil, err
 	}
-	wm, err := wal.New(dir)
+	walOptions := wal.DefaultOptions()
+	walOptions.SyncPolicy = options.WALSyncPolicy
+	if options.WALSyncInterval > 0 {
+		walOptions.SyncInterval = options.WALSyncInterval
+	}
+	wm, err := wal.NewWithOptions(dir, walOptions)
 	if err != nil {
 		return nil, err
 	}

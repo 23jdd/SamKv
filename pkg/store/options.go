@@ -3,11 +3,21 @@ package store
 import (
 	"errors"
 	"time"
+
+	"github.com/23jdd/SamKv/pkg/wal"
 )
 
 const (
 	DefaultMemTableLimit       = 4 * 1024 * 1024
 	DefaultCompactionThreshold = 4
+)
+
+// WALSyncPolicy 是 Store 对 WAL 持久性策略的公开别名。
+type WALSyncPolicy = wal.SyncPolicy
+
+const (
+	WALSyncInterval   = wal.SyncInterval
+	WALSyncEveryWrite = wal.SyncEveryWrite
 )
 
 var (
@@ -28,6 +38,10 @@ type Options struct {
 	Retention time.Duration
 	// MaxSizeBytes 是 Compaction 后允许保留的近似数据量，0 表示不限制容量。
 	MaxSizeBytes int64
+	// WALSyncPolicy 决定写入返回前是否必须完成 fsync。
+	WALSyncPolicy WALSyncPolicy
+	// WALSyncInterval 是周期同步模式的刷盘间隔；0 使用 WAL 默认值。
+	WALSyncInterval time.Duration
 }
 
 // DefaultOptions 返回适合本地日志存储的默认配置。
@@ -36,6 +50,8 @@ func DefaultOptions() Options {
 		MemTableLimit:       DefaultMemTableLimit,
 		AutoCheckpoint:      true,
 		CompactionThreshold: DefaultCompactionThreshold,
+		WALSyncPolicy:       WALSyncInterval,
+		WALSyncInterval:     wal.FlushInterval,
 	}
 }
 
@@ -43,7 +59,11 @@ func validateOptions(options Options) error {
 	if options.MemTableLimit < 0 ||
 		options.CompactionThreshold < 0 ||
 		options.Retention < 0 ||
-		options.MaxSizeBytes < 0 {
+		options.MaxSizeBytes < 0 ||
+		options.WALSyncInterval < 0 {
+		return ErrInvalidOptions
+	}
+	if options.WALSyncPolicy != WALSyncInterval && options.WALSyncPolicy != WALSyncEveryWrite {
 		return ErrInvalidOptions
 	}
 	return nil
