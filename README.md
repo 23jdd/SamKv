@@ -157,13 +157,21 @@ samctl put app/config enabled
 samctl get app/config
 samctl del app/config
 samctl health
+samctl metrics
+
+samctl log -label app=api -label level=ERROR -message "request failed"
+samctl log-batch -file entries.json
+samctl query -limit 100 '"request failed"{app=api,level=ERROR}[1h]'
 ```
+
+`log-batch` 的文件可以是 `[{"labels":{"app":"api"},"message":"..."}]`，也可以是 HTTP API 同款的 `{"entries":[...]}`。
 
 默认连接 `127.0.0.1:9999`。也可以指定地址、端口和超时：
 
 ```bash
 samctl get -a 127.0.0.1 -p 9999 -timeout 5s app/config
 samctl -m put -k app/config -v enabled -a 127.0.0.1 -p 9999
+samctl query -a 127.0.0.1 -p 9999 -timeout 5s 'error{app=api}[15m]'
 ```
 
 ### samkv-admin
