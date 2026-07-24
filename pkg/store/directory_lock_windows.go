@@ -9,8 +9,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const lockRegionOffset = 1 << 30
+
 func tryLockFile(file *os.File) error {
-	var overlapped windows.Overlapped
+	overlapped := windows.Overlapped{Offset: lockRegionOffset}
 	err := windows.LockFileEx(
 		windows.Handle(file.Fd()),
 		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
@@ -26,6 +28,6 @@ func tryLockFile(file *os.File) error {
 }
 
 func unlockFile(file *os.File) error {
-	var overlapped windows.Overlapped
+	overlapped := windows.Overlapped{Offset: lockRegionOffset}
 	return windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &overlapped)
 }
