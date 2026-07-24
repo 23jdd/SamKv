@@ -212,6 +212,7 @@ func TestRunSupportsLogQueryBatchAndMetrics(t *testing.T) {
 
 func TestRunSupportsHelp(t *testing.T) {
 	tests := [][]string{
+		nil,
 		{"help"},
 		{"-m", "help"},
 	}
@@ -221,14 +222,13 @@ func TestRunSupportsHelp(t *testing.T) {
 			t.Fatalf("run(%v) error = %v", args, err)
 		}
 		output := stdout.String()
-		if !strings.Contains(output, "Usage:") || !strings.Contains(output, "samctl log") || !strings.Contains(output, "samctl metrics") {
+		if !strings.Contains(output, "Usage / 用法:") || !strings.Contains(output, "samctl log") || !strings.Contains(output, "samctl metrics") || !strings.Contains(output, "写入单条结构化日志") {
 			t.Fatalf("help output=%q", output)
 		}
 	}
 }
 func TestParseCLIConfigRequiresArguments(t *testing.T) {
 	tests := [][]string{
-		nil,
 		{"get"},
 		{"put", "key"},
 		{"health", "unexpected"},

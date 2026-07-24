@@ -484,6 +484,9 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 	}
 	config.value = value.value
 	config.valueSet = value.set
+	if config.mode == "" {
+		config.mode = "help"
+	}
 
 	switch config.mode {
 	case "help":
@@ -530,8 +533,6 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 		if config.key != "" || config.valueSet {
 			return cliConfig{}, errors.New("cli: metrics does not accept key or value")
 		}
-	case "":
-		return cliConfig{}, fmt.Errorf("%w: mode is required", ErrArgsNotEnough)
 	default:
 		return cliConfig{}, fmt.Errorf("%w: %q", ErrInvalidMode, config.mode)
 	}
@@ -550,22 +551,33 @@ func normalizeMode(mode string) string {
 }
 
 func writeCLIUsage(output io.Writer, flags *flag.FlagSet) {
-	fmt.Fprintln(output, "Usage:")
+	fmt.Fprintln(output, "Usage / 用法:")
 	fmt.Fprintln(output, "  samctl help")
+	fmt.Fprintln(output, "      显示帮助信息")
 	fmt.Fprintln(output, "  samctl get [-a address] [-p port] <key>")
+	fmt.Fprintln(output, "      读取 KV 键")
 	fmt.Fprintln(output, "  samctl put [-a address] [-p port] <key> <value>")
+	fmt.Fprintln(output, "      写入 KV 键值")
 	fmt.Fprintln(output, "  samctl del [-a address] [-p port] <key>")
+	fmt.Fprintln(output, "      删除 KV 键")
 	fmt.Fprintln(output, "  samctl health [-a address] [-p port]")
+	fmt.Fprintln(output, "      检查服务健康状态")
 	fmt.Fprintln(output, "  samctl log [-label name=value] [-timestamp time] [-sequence n] -message <message>")
+	fmt.Fprintln(output, "      写入单条结构化日志，-label 可重复")
 	fmt.Fprintln(output, "  samctl log-batch -file entries.json")
+	fmt.Fprintln(output, "      从 JSON 文件批量写入结构化日志")
 	fmt.Fprintln(output, "  samctl query [-limit n] <query>")
+	fmt.Fprintln(output, "      使用 QueryFormat 查询结构化日志")
 	fmt.Fprintln(output, "  samctl metrics [-a address] [-p port]")
+	fmt.Fprintln(output, "      输出 Prometheus 指标")
 	fmt.Fprintln(output, "  samctl -m <mode> -k <key> [-v value]")
+	fmt.Fprintln(output, "      兼容旧的 -m 调用方式")
 	if flags != nil {
+		fmt.Fprintln(output)
+		fmt.Fprintln(output, "Flags / 参数:")
 		flags.PrintDefaults()
 	}
 }
-
 func (config cliConfig) logEntry() (LogWrite, error) {
 	entry := LogWrite{
 		Labels:   map[string]string(config.labels),
