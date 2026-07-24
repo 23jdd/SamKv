@@ -11,6 +11,8 @@ import (
 // CompactionResult 描述一次全量 Compaction 的输入、输出和清理数量。
 type CompactionResult struct {
 	Path           string
+	SourceLevel    int
+	TargetLevel    int
 	InputTables    int
 	InputRecords   int
 	OutputRecords  int
