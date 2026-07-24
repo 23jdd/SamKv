@@ -25,6 +25,11 @@ type KVStore interface {
 	BackgroundError() error
 }
 
+// KVStoreWithError 允许 HTTP 层区分 key 不存在和底层 SSTable 读取失败。
+type KVStoreWithError interface {
+	GetWithError(key string) (string, bool, error)
+}
+
 type kvHandler struct {
 	store KVStore
 }
@@ -127,7 +132,20 @@ func (h *kvHandler) get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	value, found := h.store.Get(key)
+	var (
+		value string
+		found bool
+		err   error
+	)
+	if database, ok := h.store.(KVStoreWithError); ok {
+		value, found, err = database.GetWithError(key)
+	} else {
+		value, found = h.store.Get(key)
+	}
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
 	if !found {
 		writeJSONError(c, http.StatusNotFound, "key not found")
 		return
