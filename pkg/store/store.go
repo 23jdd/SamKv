@@ -25,6 +25,7 @@ type StoreManger struct {
 	maintenanceMu sync.Mutex
 
 	dir        string
+	dirLock    *directoryLock
 	mem        *MemTable
 	immutables []*MemTable
 	wm         *wal.WalManger
@@ -70,6 +71,10 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 	if err := validateOptions(options); err != nil {
 		return nil, err
 	}
+	dirLock, err := acquireDirectoryLock(dir)
+	if err != nil {
+		return nil, err
+	}
 	walOptions := wal.DefaultOptions()
 	walOptions.SyncPolicy = options.WALSyncPolicy
 	if options.WALSyncInterval > 0 {
@@ -77,11 +82,13 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 	}
 	wm, err := wal.NewWithOptions(dir, walOptions)
 	if err != nil {
+		_ = dirLock.release()
 		return nil, err
 	}
 
 	st := &StoreManger{
 		dir:           dir,
+		dirLock:       dirLock,
 		mem:           NewMemTable(options.MemTableLimit),
 		wm:            wm,
 		options:       options,
@@ -95,17 +102,20 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 	if err := st.loadSSTables(); err != nil {
 		st.closeSSTablesLocked()
 		_ = wm.Close()
+		_ = dirLock.release()
 		return nil, err
 	}
 	if err := RecoverWALFile(filepath.Join(dir, "wal.log"), st.mem); err != nil {
 		st.closeSSTablesLocked()
 		_ = wm.Close()
+		_ = dirLock.release()
 		return nil, err
 	}
 	st.sequence.Store(st.manifest.LastSequence)
 	if err := st.restoreSequence(); err != nil {
 		st.closeSSTablesLocked()
 		_ = wm.Close()
+		_ = dirLock.release()
 		return nil, err
 	}
 
@@ -258,7 +268,7 @@ func (st *StoreManger) Close() error {
 
 		st.mu.Lock()
 		defer st.mu.Unlock()
-		st.closeErr = errors.Join(st.closeSSTablesLocked(), st.wm.Close())
+		st.closeErr = errors.Join(st.closeSSTablesLocked(), st.wm.Close(), st.dirLock.release())
 	})
 	return st.closeErr
 }
