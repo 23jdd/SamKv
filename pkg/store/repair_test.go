@@ -88,3 +88,41 @@ func TestRepairDirectoryRefusesOpenStore(t *testing.T) {
 		t.Fatal("RepairDirectory() succeeded while Store was open")
 	}
 }
+func TestRepairDirectorySupportsBackupOnlyManifest(t *testing.T) {
+	dir := t.TempDir()
+	database, err := NewStoreManager(dir, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Put("key", "value"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(manifestPath(dir), manifestBackupPath(dir)); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := RepairDirectory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ValidTables != 1 {
+		t.Fatalf("repair report = %#v", report)
+	}
+	if _, err := os.Stat(manifestPath(dir)); err != nil {
+		t.Fatalf("repaired MANIFEST: %v", err)
+	}
+	reopened, err := NewStoreManager(dir, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if value, ok := reopened.Get("key"); !ok || value != "value" {
+		t.Fatalf("Get(key) = %q, %v", value, ok)
+	}
+}
