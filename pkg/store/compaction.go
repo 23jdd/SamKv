@@ -153,6 +153,7 @@ func (st *StoreManger) Compact() (CompactionResult, error) {
 		oldPath := table.Path()
 		cleanupErr = errors.Join(cleanupErr, table.Close())
 		if oldPath != "" && oldPath != path {
+			st.blockCache.removeFile(oldPath)
 			if err := os.Remove(oldPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				cleanupErr = errors.Join(cleanupErr, err)
 			}

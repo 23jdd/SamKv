@@ -28,6 +28,7 @@ type Stats struct {
 	WALBytes              int64
 	SSTableBytes          int64
 	LevelTables           map[int]int
+	BlockCache            BlockCacheStats
 	BackgroundError       error
 }
 
@@ -62,6 +63,7 @@ func (st *StoreManger) Stats() Stats {
 	if info, err := os.Stat(walPath); err == nil {
 		stats.WALBytes = info.Size()
 	}
+	stats.BlockCache = st.blockCache.Stats()
 	for _, path := range sstablePaths {
 		if info, err := os.Stat(path); err == nil {
 			stats.SSTableBytes += info.Size()
