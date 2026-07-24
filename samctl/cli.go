@@ -337,6 +337,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if config.mode == "help" {
+		writeCLIUsage(stdout, nil)
+		return nil
+	}
 
 	client, err := NewClient(config.address, config.port, config.timeout)
 	if err != nil {
@@ -428,7 +432,7 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 	flags.SetOutput(output)
 	var value optionalString
 	var message optionalString
-	flags.StringVar(&config.mode, "m", config.mode, "mode: get, put, del, health, log, log-batch, query, metrics")
+	flags.StringVar(&config.mode, "m", config.mode, "mode: get, put, del, health, log, log-batch, query, metrics, help")
 	flags.StringVar(&config.key, "k", "", "key")
 	flags.Var(&value, "v", "value; empty string is allowed")
 	flags.Var(&message, "message", "log message; empty string is allowed")
@@ -442,17 +446,7 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 	flags.IntVar(&config.port, "p", config.port, "server port")
 	flags.DurationVar(&config.timeout, "timeout", config.timeout, "request timeout")
 	flags.Usage = func() {
-		fmt.Fprintln(output, "Usage:")
-		fmt.Fprintln(output, "  samkv-cli get [-a address] [-p port] <key>")
-		fmt.Fprintln(output, "  samkv-cli put [-a address] [-p port] <key> <value>")
-		fmt.Fprintln(output, "  samkv-cli del [-a address] [-p port] <key>")
-		fmt.Fprintln(output, "  samkv-cli health [-a address] [-p port]")
-		fmt.Fprintln(output, "  samkv-cli log [-label name=value] [-timestamp time] [-sequence n] -message <message>")
-		fmt.Fprintln(output, "  samkv-cli log-batch -file entries.json")
-		fmt.Fprintln(output, "  samkv-cli query [-limit n] <query>")
-		fmt.Fprintln(output, "  samkv-cli metrics [-a address] [-p port]")
-		fmt.Fprintln(output, "  samkv-cli -m <mode> -k <key> [-v value]")
-		flags.PrintDefaults()
+		writeCLIUsage(output, flags)
 	}
 	if err := flags.Parse(args); err != nil {
 		return cliConfig{}, err
@@ -492,6 +486,10 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 	config.valueSet = value.set
 
 	switch config.mode {
+	case "help":
+		if config.key != "" || config.valueSet {
+			return cliConfig{}, errors.New("cli: help does not accept key or value")
+		}
 	case "get", "del":
 		if config.key == "" {
 			return cliConfig{}, fmt.Errorf("%w: key is required for %s", ErrArgsNotEnough, config.mode)
@@ -548,6 +546,23 @@ func normalizeMode(mode string) string {
 		return "log"
 	default:
 		return strings.ToLower(mode)
+	}
+}
+
+func writeCLIUsage(output io.Writer, flags *flag.FlagSet) {
+	fmt.Fprintln(output, "Usage:")
+	fmt.Fprintln(output, "  samctl help")
+	fmt.Fprintln(output, "  samctl get [-a address] [-p port] <key>")
+	fmt.Fprintln(output, "  samctl put [-a address] [-p port] <key> <value>")
+	fmt.Fprintln(output, "  samctl del [-a address] [-p port] <key>")
+	fmt.Fprintln(output, "  samctl health [-a address] [-p port]")
+	fmt.Fprintln(output, "  samctl log [-label name=value] [-timestamp time] [-sequence n] -message <message>")
+	fmt.Fprintln(output, "  samctl log-batch -file entries.json")
+	fmt.Fprintln(output, "  samctl query [-limit n] <query>")
+	fmt.Fprintln(output, "  samctl metrics [-a address] [-p port]")
+	fmt.Fprintln(output, "  samctl -m <mode> -k <key> [-v value]")
+	if flags != nil {
+		flags.PrintDefaults()
 	}
 }
 
