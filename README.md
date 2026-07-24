@@ -381,43 +381,125 @@ Footer 前 6 字节是 UTF-8 Magic `流萤`，后续保存格式版本及 MetaBl
 
 ## 测试与压测
 
+### 正确性检查
+
 ```bash
 go test ./...
 go vet ./...
-go test -race ./pkg/store ./pkg/wal ./pkg/skipList .
+go test -race ./...
 ```
 
-基准测试：
+测试覆盖 WAL 大记录、周期/每写 fsync、满缓冲立即刷盘、损坏尾部恢复、目录锁、Manifest 兼容、SSTable Block 校验、修复隔离、Block Cache、分层 Compaction、备份恢复、结构化日志 HTTP API、QueryFormat、管理 CLI 和压力工具重开校验。
 
-```bash
-go test ./pkg/store -run '^$' -bench . -benchmem
-```
+### 压力工具
 
-压力工具支持普通 KV 和结构化日志，并在 Checkpoint 后验证读取：
+压力工具分别统计纯写入、Checkpoint、关闭重开、持久化数据校验和端到端耗时：
 
 ```bash
 go run ./cmd/samkv-stress \
-  -mode kv -count 100000 -concurrency 8 -value-bytes 256
+  -mode kv \
+  -count 50000 \
+  -concurrency 8 \
+  -value-bytes 128 \
+  -payload-pattern random
 
 go run ./cmd/samkv-stress \
-  -mode logs -count 100000 -concurrency 8 -value-bytes 256
+  -mode logs \
+  -count 50000 \
+  -concurrency 8 \
+  -value-bytes 128 \
+  -payload-pattern random
 
 go run ./cmd/samkv-stress \
-  -mode kv -count 10000 -concurrency 4 -strict
+  -mode logs \
+  -count 10000 \
+  -concurrency 8 \
+  -value-bytes 128 \
+  -payload-pattern random \
+  -strict
 ```
 
-`-strict` 启用每写 fsync。默认使用临时目录；要保留数据可用 `-dir` 指定一个不存在或为空的目录。
+- `-payload-pattern repeated` 生成高度可压缩的重复内容，也是默认值。
+- `-payload-pattern random` 生成固定种子的低压缩内容，每轮数据一致。
+- `-strict` 使用 `WALSyncEveryWrite`，每次写入返回前执行 fsync。
+- `-verify` 默认为 `true`。工具会在 Checkpoint 后关闭 Store，重新打开数据目录，再完整读取所有记录。
+- `write_operations_per_second` 只计算写入阶段；`operations_per_second` 仍表示包含全部阶段的端到端速率。
+- JSON 中的 `write_duration`、`checkpoint_duration`、`reopen_duration`、`verify_duration` 和 `duration` 使用纳秒。
 
-### 压力测试记录
+### 测试方法
 
-2026-07-24 在 Windows/amd64、Intel Core i7-14650HX 上执行了一次本地冒烟测试。两组测试都使用默认的 `WALSyncInterval` 策略、8 个并发写入协程、2,000 条记录和 128 字节 value/message；写入后执行 Checkpoint，并完整校验读取结果。
+以下结果于 2026-07-24 在 Windows/amd64、Go 1.25.1、Intel Core i7-14650HX 上取得：
 
-| 模式 | 记录数 | 并发数 | 数据大小 | 耗时 | 吞吐量 | SSTable 大小 | 校验结果 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| KV | 2,000 | 8 | 128 B | 4.171 s | 479.50 ops/s | 294,130 B | 通过 |
-| 结构化日志 | 2,000 | 8 | 128 B | 2.306 s | 867.36 ops/s | 157,961 B | 通过 |
+1. 压力工具只构建一次，各场景顺序执行，避免不同场景争抢磁盘。
+2. 每轮使用新的临时数据目录，执行写入、Checkpoint、关闭、重开和完整校验。
+3. 每个场景运行 3 次，表格记录中位数；写吞吐范围是 3 次实测的最小值到最大值。
+4. `interval` 场景使用默认 4 KiB WAL Buffer 和 50 ms 周期；Buffer 满时立即批量刷盘。
+5. 轻量矩阵 30 轮、大样本矩阵 15 轮，共 45 轮，全部通过重开持久化校验。
 
-这是单次功能和并发正确性冒烟结果，不代表稳定的容量或延迟基线。正式评估应使用独立磁盘、预热、多轮采样和目标业务数据分布，并分别测试 `interval` 与 `every-write` 持久性策略。
+测试结果仅代表这台机器上的本地文件系统，不是跨硬件的性能承诺。
+
+### 压力结果
+
+轻量矩阵用于比较并发数、数据压缩性和 WAL 策略：
+
+| 模式 | WAL 策略 | 记录数 | 并发 | Payload | 写吞吐中位数 | 3 轮范围 | Payload 吞吐 |
+| --- | --- | ---: | ---: | --- | ---: | ---: | ---: |
+| KV | interval | 5,000 | 1 | random / 128 B | 60,202 ops/s | 45,389-61,798 | 7.35 MiB/s |
+| KV | interval | 5,000 | 8 | random / 128 B | 51,311 ops/s | 40,014-56,062 | 6.26 MiB/s |
+| KV | every-write | 1,000 | 1 | random / 128 B | 2,540 ops/s | 2,261-2,673 | 0.31 MiB/s |
+| KV | every-write | 1,000 | 8 | random / 128 B | 2,370 ops/s | 2,242-2,422 | 0.29 MiB/s |
+| 日志 | interval | 5,000 | 1 | random / 128 B | 4,100 ops/s | 3,865-4,162 | 0.50 MiB/s |
+| 日志 | interval | 5,000 | 8 | random / 128 B | 8,850 ops/s | 8,571-8,891 | 1.08 MiB/s |
+| 日志 | interval | 5,000 | 8 | repeated / 128 B | 9,593 ops/s | 9,438-9,958 | 1.17 MiB/s |
+| 日志 | interval | 5,000 | 8 | random / 1,024 B | 4,402 ops/s | 3,958-4,499 | 4.30 MiB/s |
+| 日志 | every-write | 1,000 | 1 | random / 128 B | 1,630 ops/s | 1,507-1,631 | 0.20 MiB/s |
+| 日志 | every-write | 1,000 | 8 | random / 128 B | 1,910 ops/s | 1,900-2,093 | 0.23 MiB/s |
+
+大样本矩阵用于验证吞吐稳定性、分阶段耗时和多 SSTable 恢复：
+
+| 模式 | WAL 策略 | 记录数 | Payload | 写吞吐中位数 | Checkpoint | 重开 | 校验 | 总耗时 | SSTable |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| KV | interval | 50,000 | random / 128 B | 48,848 ops/s | 196.5 ms | 48.7 ms | 253.1 ms | 1,524.4 ms | 1 |
+| KV | every-write | 10,000 | random / 128 B | 3,351 ops/s | 42.4 ms | 27.9 ms | 43.2 ms | 3,105.2 ms | 1 |
+| 日志 | interval | 50,000 | random / 128 B | 9,246 ops/s | 213.5 ms | 71.1 ms | 455.6 ms | 6,149.4 ms | 1 |
+| 日志 | interval | 20,000 | random / 1,024 B | 5,231 ops/s | 49.2 ms | 66.5 ms | 216.2 ms | 4,156.1 ms | 2 |
+| 日志 | every-write | 10,000 | random / 128 B | 2,635 ops/s | 39.7 ms | 33.1 ms | 81.3 ms | 3,945.2 ms | 1 |
+
+总耗时包含写入、Checkpoint、两次关闭、重新打开和完整校验，因此不能用记录数除以总耗时替代纯写吞吐。
+
+### 基准结果
+
+基准命令：
+
+```bash
+go test ./pkg/store \
+  -run '^$' \
+  -bench . \
+  -benchmem \
+  -benchtime=1s \
+  -count=3
+```
+
+下表使用 3 轮中位数：
+
+| 基准 | 中位数 | 内存分配 | 分配次数 |
+| --- | ---: | ---: | ---: |
+| Put / interval | 26.48 us/op | 899 B/op | 6 allocs/op |
+| Put / every-write | 300.50 us/op | 899 B/op | 6 allocs/op |
+| Get / MemTable | 41.47 ns/op | 0 B/op | 0 allocs/op |
+| Get / cached SSTable | 15.94 us/op | 29,168 B/op | 627 allocs/op |
+| Query / structured logs | 11.72 ms/op | 42,572,039 B/op | 19,032 allocs/op |
+
+微基准直接循环单个 API，不包含压力工具的关闭重开和完整校验，因此两组数字用途不同。
+
+### 结果分析
+
+- 更充分的测试发现了 WAL 周期模式的性能缺陷：4 KiB Buffer 满后曾等待下一次 50 ms ticker。改为满缓冲立即批量刷盘后，同一 5,000 条、8 并发、random/128 B 场景中，KV 从约 481 提升到 51,311 write ops/s，日志从约 361 提升到 8,850 write ops/s。
+- 旧的 `867.36 ops/s` 是 2,000 条高度可压缩日志的单次端到端结果，并混合了写入、Checkpoint 和校验，不能代表纯写性能，现已由分阶段矩阵取代。
+- 50,000 条随机日志在 interval 下保持约 9,246 write ops/s；同类 10,000 条 strict 日志约 2,635 write ops/s，说明每写 fsync 的持久性保证有明显成本。
+- KV 的 8 并发没有超过单并发，表明当前 Store 写入临界区仍是主要串行点；日志模式的编码/压缩工作使 8 并发有收益。
+- 1,024 B 随机日志的 ops/s 低于 128 B，但 Payload 吞吐达到约 5.11 MiB/s，并成功跨越 MemTable 阈值生成 2 个 SSTable。
+- `Get / cached SSTable` 的 29 KiB/627 次分配以及日志 Query 的约 42.6 MiB/19k 次分配，是后续内存和查询优化的优先目标。
 
 ## 当前边界
 
