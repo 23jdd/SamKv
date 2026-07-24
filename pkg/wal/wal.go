@@ -87,6 +87,10 @@ func (wm *WalManger) AppendLog(data []byte) error {
 	}
 	wm.bufmu.Unlock()
 
+	if wm.options.SyncPolicy == SyncEveryWrite {
+		return wm.appendAndSync(data)
+	}
+
 	if len(data) > wm.options.BufferSize {
 		wm.writeMu.Lock()
 		defer wm.writeMu.Unlock()
@@ -120,6 +124,27 @@ func (wm *WalManger) AppendLog(data []byte) error {
 	}
 	wm.buffer = append(wm.buffer, data...)
 	return nil
+}
+
+// appendAndSync 将当前缓冲和本次写入放在同一个 writeMu 临界区内持久化。
+func (wm *WalManger) appendAndSync(data []byte) error {
+	wm.writeMu.Lock()
+	defer wm.writeMu.Unlock()
+
+	wm.bufmu.Lock()
+	closed := wm.closed
+	flushErr := wm.flushErr
+	wm.bufmu.Unlock()
+	if closed {
+		return os.ErrClosed
+	}
+	if flushErr != nil {
+		return flushErr
+	}
+	if err := wm.flushBufferLocked(); err != nil {
+		return err
+	}
+	return wm.writeAndSyncLocked(data)
 }
 
 func (wm *WalManger) triggerFlush() error {
