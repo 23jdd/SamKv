@@ -27,7 +27,6 @@ type WalManger struct {
 	activeWriter *WalWriter
 	writeMu      sync.Mutex
 	bufmu        sync.Mutex
-	flushCond    sync.Cond
 	closed       bool
 	flushErr     error
 	done         chan struct{}
@@ -66,7 +65,6 @@ func NewWithOptions(dir string, options Options) (*WalManger, error) {
 		activeWriter: &WalWriter{file: file},
 		done:         make(chan struct{}),
 	}
-	wm.flushCond = *sync.NewCond(&wm.bufmu)
 	wm.backgroundWG.Add(1)
 	go wm.Background()
 	return wm, nil
@@ -111,19 +109,29 @@ func (wm *WalManger) AppendLog(data []byte) error {
 		return wm.writeAndSyncLocked(data)
 	}
 
-	wm.bufmu.Lock()
-	defer wm.bufmu.Unlock()
-	for len(wm.buffer)+len(data) > cap(wm.buffer) && !wm.closed && wm.flushErr == nil {
-		wm.flushCond.Wait()
+	for {
+		wm.bufmu.Lock()
+		if wm.closed {
+			wm.bufmu.Unlock()
+			return os.ErrClosed
+		}
+		if wm.flushErr != nil {
+			err := wm.flushErr
+			wm.bufmu.Unlock()
+			return err
+		}
+		if len(wm.buffer)+len(data) <= cap(wm.buffer) {
+			wm.buffer = append(wm.buffer, data...)
+			wm.bufmu.Unlock()
+			return nil
+		}
+		wm.bufmu.Unlock()
+
+		// 缓冲已满时立即刷出完整批次，避免写线程等待下一个周期 ticker。
+		if err := wm.triggerFlush(); err != nil {
+			return err
+		}
 	}
-	if wm.closed {
-		return os.ErrClosed
-	}
-	if wm.flushErr != nil {
-		return wm.flushErr
-	}
-	wm.buffer = append(wm.buffer, data...)
-	return nil
 }
 
 // appendAndSync 将当前缓冲和本次写入放在同一个 writeMu 临界区内持久化。
@@ -164,7 +172,6 @@ func (wm *WalManger) flushBufferLocked() error {
 	reusable := wm.flushBatch
 	wm.flushBatch = wm.buffer
 	wm.buffer = reusable[:0]
-	wm.flushCond.Broadcast()
 	wm.bufmu.Unlock()
 
 	if err := wm.writeAndSyncLocked(wm.flushBatch); err != nil {
@@ -176,7 +183,6 @@ func (wm *WalManger) flushBufferLocked() error {
 		wm.buffer = restored
 		wm.flushBatch = reusable[:0]
 		wm.flushErr = err
-		wm.flushCond.Broadcast()
 		wm.bufmu.Unlock()
 		return err
 	}

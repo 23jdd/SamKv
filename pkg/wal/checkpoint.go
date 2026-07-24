@@ -125,7 +125,6 @@ func (wm *WalManger) Close() error {
 	wm.closeOnce.Do(func() {
 		wm.bufmu.Lock()
 		wm.closed = true
-		wm.flushCond.Broadcast()
 		wm.bufmu.Unlock()
 
 		close(wm.done)

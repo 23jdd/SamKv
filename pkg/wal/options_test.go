@@ -80,3 +80,39 @@ func TestSyncIntervalDefersSmallWriteUntilFlush(t *testing.T) {
 		t.Fatal("wal is empty after Flush")
 	}
 }
+
+func TestSyncIntervalFlushesFullBufferWithoutWaitingForTicker(t *testing.T) {
+	options := DefaultOptions()
+	options.BufferSize = 8
+	options.SyncInterval = time.Hour
+	writer, err := NewWithOptions(t.TempDir(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	if err := writer.AppendLog([]byte("123456")); err != nil {
+		t.Fatal(err)
+	}
+	appendDone := make(chan error, 1)
+	go func() {
+		appendDone <- writer.AppendLog([]byte("7890"))
+	}()
+
+	select {
+	case err := <-appendDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("append waited for the periodic flush after the WAL buffer became full")
+	}
+
+	info, err := os.Stat(filepath.Join(writer.Dir, "wal.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 6 {
+		t.Fatalf("wal size after full-buffer flush = %d, want 6", info.Size())
+	}
+}
