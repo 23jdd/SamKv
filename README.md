@@ -37,7 +37,13 @@ SamKv 是一个使用 Go 实现、面向结构化日志场景的单机 LSM-Tree 
 环境要求：Go 1.25.1 或兼容版本。
 
 ```bash
-go run .
+go install github.com/23jdd/SamKv
+Samkv 
+SamKv -f new.env   # 指定其他 env 文件
+SamKv start     #以 Daemon 方式运行
+SamKv start -f new.env  # 指定其他 env 文件
+SamKv stop # 停止 Daemon 
+SamKv status #  检查 Daemon 是否运行
 ```
 
 默认示例配置监听 `0.0.0.0:9999`，数据写入 `./logs`。服务收到 `SIGINT` 或 `SIGTERM` 后会优雅关闭 HTTP Server 和 Store。

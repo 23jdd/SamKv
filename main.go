@@ -24,7 +24,7 @@ const (
 )
 
 type serverConfig struct {
-	envFile string
+	envFile  string
 	isdaemon bool
 }
 
@@ -35,12 +35,35 @@ func main() {
 }
 
 func run(args []string) (returnErr error) {
+	if len(args) >= 1 {
+		switch args[0] {
+		case "start":
+			err := startDaemon(args[1:]...)
+			if err != nil {
+				panic(err)
+			}
+			return
+		case "stop":
+			err := stopDaemon()
+			if err != nil {
+				panic(err)
+			}
+			return
+		case "status":
+			status()
+			return
+		}
+	}
 	config, err := parseServerConfig(args)
 	if err != nil {
 		return err
 	}
-	if config.isdaemon{
-		  
+	if config.isdaemon {
+		err := startDaemon()
+		if err != nil {
+			panic(err)
+		}
+		return
 	}
 	options := LoadEnvFile(config.envFile)
 	dir := os.Getenv("dir")
@@ -87,10 +110,10 @@ func run(args []string) (returnErr error) {
 }
 
 func parseServerConfig(args []string) (serverConfig, error) {
-	config := serverConfig{envFile: ".env",isdaemon: false}
+	config := serverConfig{envFile: ".env", isdaemon: false}
 	flags := flag.NewFlagSet("samkv", flag.ContinueOnError)
 	flags.StringVar(&config.envFile, "f", config.envFile, ".env file path")
-	flags.BoolVar(&config.isdaemon,"d",config.isdaemon,"judge daemon process")
+	flags.BoolVar(&config.isdaemon, "d", config.isdaemon, "judge whether daemon process")
 	if err := flags.Parse(args); err != nil {
 		return serverConfig{}, err
 	}

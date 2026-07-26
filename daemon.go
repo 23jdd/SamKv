@@ -13,11 +13,11 @@ import (
 
 const (
 	daemonEnv   = "_IS_DAEMON"
-	pidFileName = "mydaemon.pid"
+	pidFileName = "SamKv.pid"
 )
 
-// ========== 启动 Daemon ==========
-func startDaemon() error {
+// startDaemon 使用来 启动 Daemon
+func startDaemon(args ...string) error {
 	if isRunning() {
 		return fmt.Errorf("daemon already running")
 	}
@@ -37,12 +37,11 @@ func startDaemon() error {
 	defer f.Close()
 
 	// 重新执行自身
-	cmd := exec.Command(exe)
+	cmd := exec.Command(exe, args...)
 	cmd.Env = append(os.Environ(), daemonEnv+"=1")
 	cmd.Stdin = nil
 	cmd.Stdout = f
 	cmd.Stderr = f
-
 	// 平台特定：脱离父进程/终端
 	setProAttr(cmd)
 
@@ -52,7 +51,7 @@ func startDaemon() error {
 
 	// 保存 PID
 	savePID(cmd.Process.Pid)
-
+	fmt.Println("Command", cmd)
 	fmt.Printf("Daemon started, PID: %d\n", cmd.Process.Pid)
 	fmt.Printf("Log file: %s\n", logFile)
 
@@ -61,7 +60,7 @@ func startDaemon() error {
 	return nil
 }
 
-// ========== 停止 Daemon ==========
+// stopDaemon 停止 Daemon
 func stopDaemon() error {
 	pid, err := readPID()
 	if err != nil {
@@ -87,10 +86,11 @@ func stopDaemon() error {
 	}
 
 	os.Remove(getPIDFile())
+	fmt.Println("Daemon stoped", "PID: ", pid)
 	return nil
 }
 
-// ========== 状态检查 ==========
+// status 状态检查
 func status() {
 	pid, err := readPID()
 	if err != nil {
@@ -115,7 +115,7 @@ func status() {
 	fmt.Printf("Log file: %s\n", getLogFile())
 }
 
-// ========== 辅助函数 ==========
+// 辅助函数
 func isRunning() bool {
 	_, err := readPID()
 	return err == nil
