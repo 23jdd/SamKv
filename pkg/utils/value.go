@@ -10,18 +10,68 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
+
+const valueVersion byte = 1
+
+// CompressionType 是 Value 载荷压缩算法的稳定磁盘编号。
+// 已发布编号只能追加，不能复用或重排，否则旧 Value 会按错误算法解码。
+type CompressionType byte
 
 const (
-	valueVersion byte = 1
-
 	// CompressionNone 表示 Message 保存原始日志内容。
-	CompressionNone byte = 0
-
-	// CompressionGzip 表示 Message 使用 gzip 压缩。
-	// 这里使用标准库 gzip，避免额外引入 Snappy/Zstd 依赖。
-	CompressionGzip byte = 1
+	CompressionNone CompressionType = iota
+	// CompressionGzip 表示 Message 使用标准库 gzip 压缩。
+	CompressionGzip
+	// CompressionSnappy 表示 Message 使用 Snappy 压缩，适合低延迟写入。
+	CompressionSnappy
+	// CompressionLZ4 表示 Message 使用 LZ4 frame 压缩，适合高吞吐读取。
+	CompressionLZ4
+	// CompressionZstd 表示 Message 使用 Zstandard 压缩，适合更关注压缩率的场景。
+	CompressionZstd
 )
+
+// Valid 报告压缩编号是否属于当前版本已定义的磁盘格式。
+func (c CompressionType) Valid() bool {
+	return c >= CompressionNone && c <= CompressionZstd
+}
+
+// String 返回配置文件和 HTTP 参数使用的小写算法名。
+func (c CompressionType) String() string {
+	switch c {
+	case CompressionNone:
+		return "none"
+	case CompressionGzip:
+		return "gzip"
+	case CompressionSnappy:
+		return "snappy"
+	case CompressionLZ4:
+		return "lz4"
+	case CompressionZstd:
+		return "zstd"
+	default:
+		return "unknown"
+	}
+}
+
+// ParseCompressionType 把配置名称转换为稳定编号；名称忽略首尾空白和大小写。
+func ParseCompressionType(value string) (CompressionType, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "none":
+		return CompressionNone, nil
+	case "gzip":
+		return CompressionGzip, nil
+	case "snappy":
+		return CompressionSnappy, nil
+	case "lz4":
+		return CompressionLZ4, nil
+	case "zstd":
+		return CompressionZstd, nil
+	default:
+		return 0, fmt.Errorf("%w: %q", ErrUnsupportedCompression, value)
+	}
+}
 
 var (
 	// ErrInvalidValue 表示 value 的二进制格式不合法。
@@ -36,7 +86,7 @@ var (
 type Value struct {
 	Timestamp   int64
 	Message     []byte
-	Compression byte
+	Compression CompressionType
 }
 
 // NewValue 创建一个 gzip 压缩的日志 Value。
@@ -47,7 +97,7 @@ func NewValue(timestamp int64, message []byte) (Value, error) {
 
 // NewValueWithCompression 创建指定压缩格式的日志 Value。
 // 仅支持 CompressionNone 和 CompressionGzip，其他值返回 ErrUnsupportedCompression。
-func NewValueWithCompression(timestamp int64, message []byte, compression byte) (Value, error) {
+func NewValueWithCompression(timestamp int64, message []byte, compression CompressionType) (Value, error) {
 	compressed, err := compressMessage(message, compression)
 	if err != nil {
 		return Value{}, err
@@ -64,9 +114,12 @@ func (v Value) DecompressedMessage() ([]byte, error) {
 // MarshalBinary 将 Value 编码成二进制格式。
 // 格式：version、compression、timestamp、compressed message。
 func (v Value) MarshalBinary() ([]byte, error) {
+	if !v.Compression.Valid() {
+		return nil, ErrUnsupportedCompression
+	}
 	var buf bytes.Buffer
 	buf.WriteByte(valueVersion)
-	buf.WriteByte(v.Compression)
+	buf.WriteByte(byte(v.Compression))
 	if err := writeInt64(&buf, v.Timestamp); err != nil {
 		return nil, err
 	}
@@ -87,11 +140,12 @@ func UnmarshalValue(data []byte) (Value, error) {
 	if version != valueVersion {
 		return Value{}, fmt.Errorf("%w: version %d", ErrInvalidValue, version)
 	}
-	compression, err := reader.ReadByte()
+	compressionByte, err := reader.ReadByte()
 	if err != nil {
 		return Value{}, ErrInvalidValue
 	}
-	if compression != CompressionNone && compression != CompressionGzip {
+	compression := CompressionType(compressionByte)
+	if !compression.Valid() {
 		return Value{}, ErrUnsupportedCompression
 	}
 	timestamp, err := readInt64(reader)
@@ -108,7 +162,7 @@ func UnmarshalValue(data []byte) (Value, error) {
 	return Value{Timestamp: timestamp, Message: message, Compression: compression}, nil
 }
 
-func compressMessage(message []byte, compression byte) ([]byte, error) {
+func compressMessage(message []byte, compression CompressionType) ([]byte, error) {
 	switch compression {
 	case CompressionNone:
 		out := make([]byte, len(message))
@@ -130,7 +184,7 @@ func compressMessage(message []byte, compression byte) ([]byte, error) {
 	}
 }
 
-func decompressMessage(message []byte, compression byte) ([]byte, error) {
+func decompressMessage(message []byte, compression CompressionType) ([]byte, error) {
 	switch compression {
 	case CompressionNone:
 		out := make([]byte, len(message))
