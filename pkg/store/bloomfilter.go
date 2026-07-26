@@ -1,5 +1,8 @@
 package store
 
+// 本文件实现并发安全 Bloom Filter、参数估算以及版本化二进制格式。
+// SSTable 只用它快速排除“不可能存在”的 key，命中后仍必须读取并比较真实记录。
+
 import (
 	"encoding/binary"
 	"errors"
@@ -11,6 +14,7 @@ import (
 const bloomFilterVersion uint32 = 1
 
 // BloomFilter 是一个并发安全的布隆过滤器。
+// 零值不能直接 Add/Contains；可作为 UnmarshalBinary 的接收者，或通过构造函数创建。
 //
 // Bloom Filter 的判断结果：
 //   - Contains 返回 false：元素一定不存在
@@ -116,6 +120,7 @@ func NewBloomFilterWithSize(
 }
 
 // Add 向 Bloom Filter 中添加一个 key。
+// 空 key 被忽略；重复添加会重复增加 Count，但不会造成已添加 key 的假阴性。
 func (b *BloomFilter) Add(key []byte) {
 	if len(key) == 0 {
 		return
@@ -170,6 +175,7 @@ func (b *BloomFilter) ContainsString(key string) bool {
 }
 
 // Reset 清空 Bloom Filter。
+// 它保留 bit 数和 hash 数配置，因此可以继续复用；与并发查询/添加之间由内部锁串行化。
 func (b *BloomFilter) Reset() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -205,6 +211,7 @@ func (b *BloomFilter) Count() uint64 {
 }
 
 // EstimatedFalsePositiveRate 计算当前近似误判率。
+// Count 包含重复 Add，因此高重复负载下该估算可能高于实际误判率。
 func (b *BloomFilter) EstimatedFalsePositiveRate() float64 {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -277,6 +284,8 @@ func (b *BloomFilter) MarshalBinary() ([]byte, error) {
 }
 
 // UnmarshalBinary 从二进制恢复 Bloom Filter。
+// 输入必须恰好是一份 v1 数据，截断、尾随字节或 bitSize/wordCount 不一致都会返回错误；
+// 失败不会修改接收者当前状态。
 func (b *BloomFilter) UnmarshalBinary(data []byte) error {
 	const headerSize = 4 + 8 + 8 + 8 + 8
 

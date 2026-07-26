@@ -1,5 +1,8 @@
 package store
 
+// 本文件覆盖 Bloom Filter 无假阴性往返、Reset 复用和非法容量/误判率边界。
+// 对未加入 key 不作普遍 false 断言，因为 Bloom Filter 按定义允许假阳性。
+
 import "testing"
 
 func TestBloomFilterRoundTripAndReset(t *testing.T) {

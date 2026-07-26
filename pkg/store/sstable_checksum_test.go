@@ -1,5 +1,8 @@
 package store
 
+// 本文件覆盖 CRC32C 往返、trailer 截断、DataBlock 损坏和 MetaBlock 损坏。
+// flipFileByte 会同步修改到磁盘，用于区分打开时校验与按需读取时校验。
+
 import (
 	"errors"
 	"os"

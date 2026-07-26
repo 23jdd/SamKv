@@ -1,5 +1,8 @@
 package store
 
+// 本文件实现 Store 内所有 SSTable 共享的按字节限制 LRU Block Cache。
+// 缓存键包含路径、偏移、大小和格式版本，Compaction 删除文件时会按路径失效条目。
+
 import (
 	"container/list"
 	"sync"
@@ -7,11 +10,14 @@ import (
 
 // BlockCacheStats 是 Block Cache 的只读运行统计。
 type BlockCacheStats struct {
-	Hits      uint64
-	Misses    uint64
+	// Hits 和 Misses 只统计启用缓存后的内部读取。
+	Hits   uint64
+	Misses uint64
+	// Evictions 是因容量不足发生的 LRU 淘汰次数，显式文件失效不计入。
 	Evictions uint64
-	Entries   int
-	Bytes     int64
+	// Entries 和 Bytes 是调用 Stats 时的当前占用快照。
+	Entries int
+	Bytes   int64
 }
 
 type blockCacheKey struct {
@@ -27,6 +33,7 @@ type blockCacheEntry struct {
 }
 
 // BlockCache 是按字节容量限制的并发安全 SSTable Block LRU 缓存。
+// 公开零值等价于禁用；缓存内容是完整 block 的副本，内部 get 返回值只允许读取。
 type BlockCache struct {
 	mu        sync.Mutex
 	capacity  int64
@@ -39,6 +46,7 @@ type BlockCache struct {
 }
 
 // NewBlockCache 创建共享 Block Cache；capacityBytes <= 0 时禁用缓存。
+// 大于总容量的单个 block 不会缓存；容量是 payload 字节近似值，不含 map/list 对象开销。
 func NewBlockCache(capacityBytes int64) *BlockCache {
 	return &BlockCache{
 		capacity: capacityBytes,
@@ -112,6 +120,7 @@ func (cache *BlockCache) removeElement(element *list.Element) {
 }
 
 // Stats 返回命中、未命中、淘汰数量和当前占用。
+// nil 或禁用缓存返回全零快照；累计计数只在进程生命周期内有效。
 func (cache *BlockCache) Stats() BlockCacheStats {
 	if cache == nil {
 		return BlockCacheStats{}

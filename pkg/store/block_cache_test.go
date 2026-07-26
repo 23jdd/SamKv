@@ -1,5 +1,8 @@
 package store
 
+// 本文件覆盖 LRU 顺序、按 SSTable 路径失效和并发读取统计。
+// 并发用例配合 race detector 验证锁保护，数据切片在缓存命中后只读。
+
 import (
 	"sync"
 	"testing"

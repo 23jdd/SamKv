@@ -1,5 +1,8 @@
 package store
 
+// 本文件覆盖 Store 重开后的真实 Block Cache 命中，以及 Verify 绕过缓存读取磁盘。
+// 后者保证缓存中的旧副本不能掩盖底层文件发生的校验损坏。
+
 import (
 	"errors"
 	"testing"
