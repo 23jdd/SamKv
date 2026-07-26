@@ -3,9 +3,10 @@ package main
 // Matcher 判断 target 是否匹配 pattern
 // 支持中文、emoji 等任意 Unicode 字符
 // pattern 支持三种通配符：
-//   %    匹配任意长度字符串（包括空串）
-//   _    匹配恰好一个任意字符
-//   [..] 匹配方括号内任意一个字符
+//
+//	%    匹配任意长度字符串（包括空串）
+//	_    匹配恰好一个任意字符
+//	[..] 匹配方括号内任意一个字符
 func Matcher(target []byte, pattern []byte) bool {
 	// 转为 rune 切片，按字符（码点）操作
 	tr := []rune(string(target))
