@@ -18,7 +18,11 @@ import (
 	"github.com/pierrec/lz4/v4"
 )
 
-const valueVersion byte = 1
+const (
+	valueVersion byte = 1
+	// MaxValueMessageSize 限制单条日志解压后的消息大小，防止压缩炸弹耗尽内存。
+	MaxValueMessageSize = 64 * 1024 * 1024
+)
 
 // CompressionType 是 Value 载荷压缩算法的稳定磁盘编号。
 // 已发布编号只能追加，不能复用或重排，否则旧 Value 会按错误算法解码。
@@ -90,6 +94,9 @@ var (
 
 	// ErrUnsupportedCompression 表示遇到了当前版本不支持的压缩算法。
 	ErrUnsupportedCompression = errors.New("utils: unsupported compression")
+
+	// ErrValueTooLarge 表示原始消息或解压输出超过 MaxValueMessageSize。
+	ErrValueTooLarge = errors.New("utils: value message too large")
 )
 
 // Value 保存日志内容。
@@ -107,7 +114,7 @@ func NewValue(timestamp int64, message []byte) (Value, error) {
 }
 
 // NewValueWithCompression 创建指定压缩格式的日志 Value。
-// 仅支持 CompressionNone 和 CompressionGzip，其他值返回 ErrUnsupportedCompression。
+// compression 必须是已定义算法；message 超过 MaxValueMessageSize 时返回 ErrValueTooLarge。
 func NewValueWithCompression(timestamp int64, message []byte, compression CompressionType) (Value, error) {
 	compressed, err := compressMessage(message, compression)
 	if err != nil {
@@ -117,7 +124,7 @@ func NewValueWithCompression(timestamp int64, message []byte, compression Compre
 }
 
 // DecompressedMessage 返回解压后的原始日志内容。
-// 每次调用都返回新切片；gzip 数据损坏时返回标准库解压错误。
+// 每次调用都返回新切片；损坏数据返回对应解码错误，解压输出过大返回 ErrValueTooLarge。
 func (v Value) DecompressedMessage() ([]byte, error) {
 	return decompressMessage(v.Message, v.Compression)
 }
@@ -174,6 +181,9 @@ func UnmarshalValue(data []byte) (Value, error) {
 }
 
 func compressMessage(message []byte, compression CompressionType) ([]byte, error) {
+	if err := validateMessageSize(len(message)); err != nil {
+		return nil, err
+	}
 	switch compression {
 	case CompressionNone:
 		out := make([]byte, len(message))
@@ -217,6 +227,9 @@ func compressMessage(message []byte, compression CompressionType) ([]byte, error
 func decompressMessage(message []byte, compression CompressionType) ([]byte, error) {
 	switch compression {
 	case CompressionNone:
+		if err := validateMessageSize(len(message)); err != nil {
+			return nil, err
+		}
 		out := make([]byte, len(message))
 		copy(out, message)
 		return out, nil
@@ -226,20 +239,49 @@ func decompressMessage(message []byte, compression CompressionType) ([]byte, err
 			return nil, err
 		}
 		defer reader.Close()
-		return io.ReadAll(reader)
+		return readLimitedMessage(reader)
 	case CompressionSnappy:
+		decodedLength, err := snappy.DecodedLen(message)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateMessageSize(decodedLength); err != nil {
+			return nil, err
+		}
 		return snappy.Decode(nil, message)
 	case CompressionLZ4:
-		return io.ReadAll(lz4.NewReader(bytes.NewReader(message)))
+		return readLimitedMessage(lz4.NewReader(bytes.NewReader(message)))
 	case CompressionZstd:
 		_, decoder, err := zstdCodecs()
 		if err != nil {
 			return nil, err
 		}
-		return decoder.DecodeAll(message, nil)
+		decoded, err := decoder.DecodeAll(message, nil)
+		if errors.Is(err, zstd.ErrDecoderSizeExceeded) {
+			return nil, ErrValueTooLarge
+		}
+		return decoded, err
 	default:
 		return nil, ErrUnsupportedCompression
 	}
+}
+
+func validateMessageSize(size int) error {
+	if size < 0 || size > MaxValueMessageSize {
+		return ErrValueTooLarge
+	}
+	return nil
+}
+
+func readLimitedMessage(reader io.Reader) ([]byte, error) {
+	message, err := io.ReadAll(io.LimitReader(reader, int64(MaxValueMessageSize)+1))
+	if err != nil {
+		return nil, err
+	}
+	if err := validateMessageSize(len(message)); err != nil {
+		return nil, err
+	}
+	return message, nil
 }
 
 // zstdCodecs 延迟创建可并发复用的无状态 Zstd 编解码器。
@@ -250,10 +292,13 @@ func zstdCodecs() (*zstd.Encoder, *zstd.Decoder, error) {
 		if zstdInitErr != nil {
 			return
 		}
-		zstdDecoder, zstdInitErr = zstd.NewReader(nil)
+		zstdDecoder, zstdInitErr = zstd.NewReader(nil,
+			zstd.WithDecoderMaxMemory(uint64(MaxValueMessageSize)),
+		)
 	})
 	return zstdEncoder, zstdDecoder, zstdInitErr
 }
+
 func writeInt64(w io.Writer, v int64) error {
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(v))
@@ -292,12 +337,15 @@ func writeBytes(w io.Writer, data []byte) error {
 	return err
 }
 
-func readBytes(r io.Reader) ([]byte, error) {
+func readBytes(r *bytes.Reader) ([]byte, error) {
 	length, err := readUint32(r)
 	if err != nil {
 		return nil, err
 	}
-	data := make([]byte, length)
+	if uint64(length) > uint64(r.Len()) {
+		return nil, ErrInvalidValue
+	}
+	data := make([]byte, int(length))
 	if _, err := io.ReadFull(r, data); err != nil {
 		return nil, ErrInvalidValue
 	}

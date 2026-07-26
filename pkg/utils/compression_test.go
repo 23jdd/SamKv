@@ -149,3 +149,16 @@ func TestZstdRejectsCorruptFrame(t *testing.T) {
 		t.Fatal("corrupt Zstd frame was accepted")
 	}
 }
+
+func TestValueMessageSizeBoundary(t *testing.T) {
+	if err := validateMessageSize(MaxValueMessageSize); err != nil {
+		t.Fatalf("maximum message rejected: %v", err)
+	}
+	if err := validateMessageSize(MaxValueMessageSize + 1); !errors.Is(err, ErrValueTooLarge) {
+		t.Fatalf("oversized message error = %v", err)
+	}
+	value := Value{Message: make([]byte, MaxValueMessageSize+1), Compression: CompressionNone}
+	if _, err := value.DecompressedMessage(); !errors.Is(err, ErrValueTooLarge) {
+		t.Fatalf("oversized raw value error = %v", err)
+	}
+}
