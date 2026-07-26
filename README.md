@@ -24,12 +24,12 @@ SamKv 是一个使用 Go 实现、面向结构化日志场景的单机 LSM-Tree 
 
 | 模块 | 已实现能力 |
 | --- | --- |
-| WAL | CRC32 记录校验、损坏尾部截断、超过缓冲容量的记录直写、周期 fsync 与每写 fsync 两种策略 |
+| WAL | 64 MiB 分段、按记录边界轮转、CRC32 记录校验、末段残缺尾部截断、完整坏记录跳过与恢复报告、周期/每写 fsync |
 | MemTable | 并发安全 SkipList、原子容量统计、墓碑、Mutable/Immutable 切换和后台刷盘 |
 | SSTable | DataBlock、MetaBlock、IndexBlock、Footer、前缀压缩、restart point、CRC32C Block 校验 |
 | 索引与缓存 | key/标签 BloomFilter、时间与 key 范围索引、共享字节容量 LRU Block Cache |
-| Compaction | L0 重叠合并、非零层增量下推、key-range 并行子任务、原子 Manifest 发布、底层墓碑与保留策略回收 |
-| 元数据 | Manifest 原子发布与备份、格式版本、SSTable 层级和日志序列号 |
+| Compaction | L0 重叠合并、非零层增量下推、key-range 并行子任务、共享令牌桶 I/O 限速、原子 Manifest 发布、底层墓碑与保留策略回收 |
+| 元数据 | `MANIFEST-<generation>` 原子发布、`CURRENT` 指针与备份回退、格式版本、SSTable 层级和日志序列号 |
 | 运维 | 数据目录进程锁、Checkpoint、校验修复、全量备份恢复、格式升级、运行指标 |
 | 接入 | KV HTTP API、结构化日志写入/批量写入/QueryFormat 查询、Prometheus 指标、CLI |
 
@@ -209,6 +209,9 @@ samkv-admin upgrade -dir ./logs
 ```go
 options := store.DefaultOptions()
 options.WALSyncPolicy = store.WALSyncEveryWrite
+options.WALSegmentSize = 64 * 1024 * 1024
+options.CompressionType = utils.CompressionSnappy
+options.CompactionRateLimitBytesPerSec = 64 * 1024 * 1024
 options.Retention = 7 * 24 * time.Hour
 options.MaxSizeBytes = 10 * 1024 * 1024 * 1024
 
@@ -282,7 +285,7 @@ _, _, _, _, _, _ = result, verification, backup, upgrade, stats, err
 
 `WriteBatch` 将整批数据一次追加到 WAL，再按顺序更新 MemTable；WAL 恢复仍按单条记录重放，因此它不是支持回滚的跨记录事务。
 
-后台 Compaction 使用层级阈值增量合并。L0 达到 `CompactionThreshold` 后合并全部 L0 及其与 L1 重叠的文件；L1 以上每次选择一个源文件和下一层重叠文件。单次分层 Compaction 根据 DataBlock 索引把 key 空间切成互不重叠的 `[start,end)` 子任务，最多使用 `CompactionWorkers` 个 goroutine；输入不足 `CompactionTaskBytes` 时自动减少任务数，避免小文件放大。各子任务并行扫描并生成独立 SSTable，所有输出成功后才一次性发布 Manifest，失败时清理未发布文件。Compaction 顺序扫描不会写入 Block Cache。
+后台 Compaction 使用层级阈值增量合并。L0 达到 `CompactionThreshold` 后合并全部 L0 及其与 L1 重叠的文件；L1 以上每次选择一个源文件和下一层重叠文件。单次分层 Compaction 根据 DataBlock 索引把 key 空间切成互不重叠的 `[start,end)` 子任务，最多使用 `CompactionWorkers` 个 goroutine；输入不足 `CompactionTaskBytes` 时自动减少任务数，避免小文件放大。各子任务并行扫描并生成独立 SSTable，所有输出成功后才一次性发布 Manifest，失败时清理未发布文件。所有输出共享 `CompactionRateLimitBytesPerSec` 令牌桶，因此限制的是聚合带宽；`0` 可关闭限速。Compaction 顺序扫描不会写入 Block Cache。
 
 墓碑、`Retention` 和 `MaxSizeBytes` 只在最底层回收，避免旧值重新出现。`MaxSizeBytes` 对全部子任务结果统一计算，不会被每个子任务重复使用。`Compact()` 保留为显式全量整理入口；它仍是单任务全量整理。`CompactionResult.Path` 保留为首个输出路径，新增代码应使用 `Paths`、`OutputTables` 和 `Subtasks` 查看并行结果。
 
@@ -303,9 +306,9 @@ go test ./... -run '^Example'
 
 | 模块 | Example |
 | --- | --- |
-| Store | MemTable、Batch、BloomFilter、SSTable、Checkpoint、分层 Compaction、结构化日志、备份恢复 |
+| Store | MemTable、Batch、BloomFilter、SSTable/懒加载 Iterator、Checkpoint、分层 Compaction、结构化日志、备份恢复 |
 | WAL | Record 编解码、打开/追加/读取/关闭 |
-| Utils | 复合日志 Key、压缩 Value |
+| Utils | 复合日志 Key、none/Gzip/Snappy/LZ4/Zstd 压缩 Value |
 | Parse | QueryFormat 解析与时间窗口 |
 | HTTP | 使用 `httptest` 完成 KV PUT/GET |
 | CLI | `samctl` 的 IPv6 地址构造 |
@@ -363,14 +366,18 @@ start, end := query.TimeRange(time.Now().UTC())
 | `CompactionThreshold` | `4` | L0 文件触发合并的数量，`0` 表示关闭 L0 自动触发 |
 | `CompactionWorkers` | `4` | 单次分层 Compaction 的最大并行子任务数 |
 | `CompactionTaskBytes` | 8 MiB | 每增加一个并行子任务所需的近似输入量，防止小 Compaction 产生过多文件 |
+| `CompactionRateLimitBytesPerSec` | 64 MiB/s | 全量与分层 Compaction 共享输出速率；`0` 表示不限制 |
 | `MaxLevels` | `4` | LSM 总层数，至少为 2 |
 | `LevelBaseSizeBytes` | 64 MiB | L1 向 L2 下推的容量阈值 |
 | `LevelSizeMultiplier` | `10` | 相邻非零层容量倍率 |
 | `Retention` | `0` | 最底层合并时的日志保留时长，`0` 表示永久保留 |
 | `MaxSizeBytes` | `0` | 最底层合并后的近似数据上限，`0` 表示不限制 |
 | `BlockCacheBytes` | 64 MiB | 共享 SSTable Block Cache 容量，`0` 表示禁用 |
+| `CompressionType` | `snappy` | 结构化日志新 Value：`none`、`gzip`、`snappy`、`lz4` 或 `zstd` |
 | `WALSyncPolicy` | `interval` | `interval` 或 `every-write` |
 | `WALSyncInterval` | `50ms` | 周期同步间隔 |
+| `WALSegmentSize` | 64 MiB | segment 近似字节阈值；单条 record 不跨段拆分 |
+| `WALSegmentMaxRecords` | `0` | 每段记录数阈值；`0` 表示只按字节轮转 |
 
 服务从 `.env` 和同名进程环境变量读取配置，进程环境变量优先。`Retention` 在 `.env` 中使用小时数，`WALSyncInterval` 使用 Go duration：
 
@@ -385,14 +392,18 @@ AutoCheckpoint=true
 CompactionThreshold=4
 CompactionWorkers=4
 CompactionTaskBytes=8388608
+CompactionRateLimitBytesPerSec=67108864
 MaxLevels=4
 LevelBaseSizeBytes=67108864
 LevelSizeMultiplier=10
 Retention=168
 MaxSizeBytes=0
 BlockCacheBytes=67108864
+CompressionType=snappy
 WALSyncPolicy=interval
 WALSyncInterval=50ms
+WALSegmentSize=67108864
+WALSegmentMaxRecords=0
 ```
 
 ## 存储与恢复
@@ -411,7 +422,7 @@ WALSyncInterval=50ms
 [version][compression][timestamp][message length][compressed message]
 ```
 
-当前支持原文和 Gzip，默认使用 Gzip。
+当前支持 `none`、Gzip、Snappy、LZ4 frame 和 Zstd；Store 的结构化日志默认使用 Snappy，`utils.NewValue` 的兼容入口仍默认 Gzip。算法编号写在每条 Value 中，因此修改默认值不影响旧数据读取。原始消息和解压输出上限均为 64 MiB。
 
 ### SSTable 与 Block 校验
 
@@ -424,17 +435,31 @@ WALSyncInterval=50ms
 
 Footer 前 6 字节是 UTF-8 Magic `流萤`，后续保存格式版本及 MetaBlock/IndexBlock 位置。SSTable v2 为每个 Block 增加 CRC32C；读取损坏 Block 会返回错误。当前代码兼容只读 v1，并拒绝未知的未来版本。
 
-打开 SSTable 时只加载 Footer、MetaBlock 和 IndexBlock。DataBlock 按查询范围读取并进入共享 LRU Block Cache；校验和启动恢复扫描绕过缓存，避免缓存掩盖磁盘损坏。
+打开 SSTable 时只加载 Footer、MetaBlock 和 IndexBlock。DataBlock 按查询范围读取并进入共享 LRU Block Cache；校验和启动恢复扫描绕过缓存，避免缓存掩盖磁盘损坏。`NewIterator` 可在 `[startKey,endKey)` 内按 Block 懒加载遍历并保留墓碑，遍历结束后必须检查 `Error()`。
+
+实现已按职责拆为 `sstable_writer.go`、`sstable_reader.go`、`sstable_block.go`、`sstable_meta.go`、`sstable_index.go`、`sstable_footer.go`、`sstable_codec.go` 和 `sstable_iterator.go`；核心 `sstable.go` 只保留稳定格式常量和类型。
 
 ### Manifest、锁与崩溃恢复
 
-`MANIFEST` 是已发布 SSTable 的权威目录，记录格式版本、文件名、SSTable 版本、层级、key/时间范围、记录数、下一个文件编号和最后日志序列号。WAL 恢复尚未 Checkpoint 的数据，Manifest 恢复已经发布的数据。
+数据目录的关键文件如下：
 
-- SSTable 发布前崩溃：从旧 WAL 重放记录。
-- Manifest 发布后、WAL 裁剪前崩溃：读取层按最新版本合并重复数据。
-- Manifest 或 WAL 原子替换中断：尝试使用 `.bak` 恢复。
-- WAL 尾部只有半条记录：启动时截断到最后一条完整记录。
-- 多进程同时打开：操作系统文件锁使后打开者失败。
+```text
+CURRENT                              # 指向已提交的 Manifest 世代
+MANIFEST-00000000000000000042        # SSTable 权威版本编辑
+wal-00000000000000000007.log         # 按 ID 递增回放的 WAL segment
+00000000000000000123.sst             # 已发布 SSTable
+LOCK                                 # 单进程目录锁
+```
+
+`CURRENT` 指向的 Manifest 是已发布 SSTable 的权威目录，记录格式版本、文件名、SSTable 版本、层级、key/时间范围、记录数、下一个文件编号和最后日志序列号。保存时先写 `MANIFEST-<generation>.tmp`、fsync、原子重命名，再写并切换 `CURRENT`；只保留最近两个世代。旧固定名 `MANIFEST`/`.bak` 会在首次成功读取后迁移。未被 `CURRENT` 引用的 Manifest 或 SSTable 被视为崩溃遗留，不参与读取。
+
+Checkpoint 顺序是：封存当前 WAL segment，写 `*.sst.tmp` 并 fsync，原子发布 SSTable，发布新 Manifest 世代并切换 `CURRENT`，最后删除已被该 SSTable 覆盖的旧 WAL segment。Manifest 发布前 WAL 始终保留；发布后即使 segment 尚未删除，重复回放也不会改变最新值。
+
+- WAL 默认约 64 MiB 轮转，也可按 `WALSegmentMaxRecords` 轮转；record 永远不会跨 segment 拆分。
+- 每条 WAL record 自带 CRC32。恢复会跳过边界完整但 checksum/内容损坏的 record，并在 `Stats` 报告跳过数。
+- 只有最后一个 segment 的残缺尾部可截断；中间 segment 截断会作为结构损坏返回错误，避免越过缺口继续恢复。
+- 启动会删除未发布的 `*.sst.tmp`；孤立 `.sst` 不可见，但其文件 ID 会被保留，防止后续覆盖修复线索。
+- `CURRENT` 损坏或切换中断时尝试 `CURRENT.bak`；多进程同时打开由操作系统文件锁拒绝。
 
 备份是经过 Checkpoint 的完整本地快照，不是增量备份。恢复必须写入新目录。升级只支持向当前格式前进，不提供降级。
 
@@ -448,7 +473,7 @@ go vet ./...
 go test -race ./...
 ```
 
-测试覆盖 WAL 大记录、周期/每写 fsync、满缓冲立即刷盘、损坏尾部恢复、目录锁、Manifest 兼容、SSTable Block 校验、修复隔离、Block Cache、分层 Compaction、备份恢复、结构化日志 HTTP API、QueryFormat、管理 CLI 和压力工具重开校验。
+测试覆盖 WAL 大记录、segment 字节/记录数轮转、周期/每写 fsync、完整坏记录跳过、末段残缺恢复、Checkpoint 崩溃窗口、CURRENT/Manifest 世代迁移、目录锁、SSTable Block 校验与懒加载 Iterator、五种 Value 编码模式、Compaction 聚合限速、修复隔离、Block Cache、备份恢复、结构化日志 HTTP API、QueryFormat、管理 CLI 和压力工具重开校验。
 
 ### 压力工具
 
@@ -487,7 +512,7 @@ go run ./cmd/samkv-stress \
 
 ### 测试方法
 
-以下结果于 2026-07-24 在 Windows/amd64、Go 1.25.1、Intel Core i7-14650HX 上取得：
+以下历史基线结果于 2026-07-24 在 Windows/amd64、Go 1.25.1、Intel Core i7-14650HX 上取得。当前默认结构化日志压缩已从 Gzip 调整为 Snappy，且 WAL 已分段；比较新版本性能时应使用相同命令重新测量：
 
 1. 压力工具只构建一次，各场景顺序执行，避免不同场景争抢磁盘。
 2. 每轮使用新的临时数据目录，执行写入、Checkpoint、关闭、重开和完整校验。
@@ -558,7 +583,8 @@ SamKv 当前是单节点、本地文件系统存储，适合作为嵌入式 KV�
 - 没有分片、副本、一致性协议、远程对象存储或跨节点故障转移。
 - HTTP 服务没有认证、授权、TLS、租户隔离和请求级限流。
 - QueryFormat 目前支持标签等值和内容子串匹配，不支持正则、全文倒排索引、聚合或查询计划。
-- 分层 Compaction 已支持单次任务内的 key-range 并行，但顶层版本编辑仍由 `maintenanceMu` 串行；还没有 I/O 限速、写停顿控制和 SSD/HDD 分层。
+- 分层 Compaction 已支持 key-range 并行和聚合输出限速，但顶层版本编辑仍由 `maintenanceMu` 串行；还没有基于前台延迟的动态写停顿、读带宽限速和 SSD/HDD 分层。
 - 修复工具能检测并隔离损坏文件，但无法重建其中已经丢失的记录。
 - 指标是进程内状态；备份是本地全量快照，尚无远程增量备份、PITR 和自动恢复演练。
-- 格式已具备显式版本和 v1/v2 兼容读取，但仍需要长期兼容矩阵、模糊测试和跨版本升级测试。
+- 格式已具备显式版本、v1/v2 兼容读取和 CURRENT Manifest 世代协议，但仍需要长期兼容矩阵、模糊测试和跨版本升级测试。
+- 项目采用 MIT License；生产部署仍需自行完成安全评估、容量规划和故障演练。
