@@ -61,7 +61,7 @@ func (st *StoreManger) WriteLogs(entries []LogEntry) ([]uint64, error) {
 		if err != nil {
 			return nil, err
 		}
-		value, err := utils.NewValue(timestamp, entry.Message)
+		value, err := utils.NewValueWithCompression(timestamp, entry.Message, st.options.CompressionType)
 		if err != nil {
 			return nil, err
 		}

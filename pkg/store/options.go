@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/23jdd/SamKv/pkg/utils"
 	"github.com/23jdd/SamKv/pkg/wal"
 )
 
@@ -59,6 +60,8 @@ type Options struct {
 	MaxSizeBytes int64
 	// BlockCacheBytes 是共享 SSTable Block Cache 的容量，0 表示禁用。
 	BlockCacheBytes int64
+	// CompressionType 控制 WriteLog/WriteLogs 新写 Value 的压缩算法；旧 Value 仍按自身算法编号读取。
+	CompressionType utils.CompressionType
 	// WALSyncPolicy 决定写入返回前是否必须完成 fsync。
 	WALSyncPolicy WALSyncPolicy
 	// WALSyncInterval 是周期同步模式的刷盘间隔；0 使用 WAL 默认值。
@@ -78,6 +81,7 @@ func DefaultOptions() Options {
 		LevelBaseSizeBytes:  DefaultLevelBaseSizeBytes,
 		LevelSizeMultiplier: DefaultLevelSizeMultiplier,
 		BlockCacheBytes:     DefaultBlockCacheBytes,
+		CompressionType:     utils.CompressionSnappy,
 		WALSyncPolicy:       WALSyncInterval,
 		WALSyncInterval:     wal.FlushInterval,
 	}
@@ -95,6 +99,9 @@ func validateOptions(options Options) error {
 		options.MaxSizeBytes < 0 ||
 		options.BlockCacheBytes < 0 ||
 		options.WALSyncInterval < 0 {
+		return ErrInvalidOptions
+	}
+	if !options.CompressionType.Valid() {
 		return ErrInvalidOptions
 	}
 	if options.WALSyncPolicy != WALSyncInterval && options.WALSyncPolicy != WALSyncEveryWrite {
