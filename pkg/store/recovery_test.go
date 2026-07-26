@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证 WAL 自动回放、半条尾记录修复、校验错误传播和删除墓碑恢复。
+
 import (
 	"os"
 	"path/filepath"

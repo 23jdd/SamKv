@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证 Checkpoint 的 SSTable 发布、WAL 重写、空表处理和故障恢复顺序。
+
 import (
 	"os"
 	"path/filepath"

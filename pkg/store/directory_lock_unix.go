@@ -2,6 +2,8 @@
 
 package store
 
+// 本文件在 Unix 系统上使用非阻塞 flock 持有整个 LOCK 文件的排他锁。
+
 import (
 	"errors"
 	"os"

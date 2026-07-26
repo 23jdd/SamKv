@@ -299,6 +299,8 @@ func (st *StoreManger) closeSSTablesLocked() error {
 }
 
 // Checkpoint 冻结当前活动 MemTable，并同步等待所有 Immutable MemTable 完成刷盘。
+// 一致性顺序是 WAL Flush -> 写 SSTable -> 发布 MANIFEST -> 用剩余内存表重写 WAL；任何较早步骤失败都不会遗失已确认写入。
+// 返回值是最后生成的 SSTable 路径；没有待刷数据时为空，但仍会按 WALSyncPolicy 完成一次 Flush。
 func (st *StoreManger) Checkpoint() (string, error) {
 	st.mu.Lock()
 	if st.closed {

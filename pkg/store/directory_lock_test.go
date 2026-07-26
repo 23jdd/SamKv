@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证同目录互斥、Close 后释放以及 LOCK 文件 pid 内容等进程锁边界。
+
 import (
 	"errors"
 	"os"

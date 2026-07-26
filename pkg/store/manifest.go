@@ -1,5 +1,8 @@
 package store
 
+// 本文件定义数据目录的 MANIFEST 格式，并用临时文件加原子重命名发布 SSTable 集合。
+// MANIFEST 是磁盘文件的唯一目录；未列入其中的 SSTable 不会在下次启动时自动加载。
+
 import (
 	"encoding/json"
 	"errors"
@@ -52,6 +55,7 @@ func manifestBackupPath(dir string) string {
 
 // loadManifest 从磁盘读取 Manifest。
 // 主文件不存在时会尝试备份文件，用于恢复 Windows 上替换文件中途发生的崩溃。
+// 主文件存在但内容损坏时会直接报错，不会静默回退到可能更旧的备份。
 func loadManifest(dir string) (Manifest, bool, error) {
 	manifest, err := readManifest(manifestPath(dir))
 	if err == nil {
@@ -118,6 +122,7 @@ func validateManifest(manifest Manifest) error {
 
 // saveManifest 先完整写入临时文件，再发布为 MANIFEST。
 // Windows 不能直接用 rename 覆盖已有文件，因此使用 .bak 保留旧版本并支持崩溃恢复。
+// 写入返回前会 fsync 临时文件；目录项持久性仍取决于操作系统和底层文件系统的 rename 语义。
 func saveManifest(dir string, manifest Manifest) error {
 	if manifest.FormatVersion == 0 {
 		manifest.FormatVersion = 1

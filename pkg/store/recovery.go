@@ -1,5 +1,7 @@
 package store
 
+// 本文件负责回放 WAL：完整记录必须通过校验，只有进程崩溃留下的不完整文件尾可以被忽略或截断。
+
 import (
 	"errors"
 	"io"
@@ -10,6 +12,7 @@ import (
 
 // Recover 从 reader 顺序回放 WAL 记录。
 // 文件尾部只有半条记录时会忽略尾部，完整记录损坏则返回错误。
+// reader 版本无法修复原始介质；需要继续追加 WAL 时应使用 RecoverWALFile。
 func Recover(reader io.Reader, mem *MemTable) error {
 	for {
 		record, err := wal.ReadRecord(reader)
@@ -27,6 +30,7 @@ func Recover(reader io.Reader, mem *MemTable) error {
 
 // RecoverWALFile 回放 WAL 文件，并截断崩溃留下的不完整尾部。
 // 截断很重要，否则新记录追加到半条记录后面会让后续恢复永远失败。
+// 文件不存在视为空 WAL；校验和错误或非法类型不会被截断掩盖，而是返回给调用方。
 func RecoverWALFile(path string, mem *MemTable) error {
 	file, err := os.OpenFile(path, os.O_RDWR, 0644)
 	if errors.Is(err, os.ErrNotExist) {

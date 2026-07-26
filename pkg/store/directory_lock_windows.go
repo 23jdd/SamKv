@@ -2,6 +2,8 @@
 
 package store
 
+// 本文件在 Windows 上使用 LockFileEx 非阻塞锁定 LOCK 文件的固定字节区域。
+
 import (
 	"errors"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// lockRegionOffset 避开 LOCK 文件中用于人工查看的 pid 文本。
 const lockRegionOffset = 1 << 30
 
 func tryLockFile(file *os.File) error {

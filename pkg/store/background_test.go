@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证自动 Checkpoint 与后台 Compaction 在并发写入、关闭和错误状态下的行为。
+
 import (
 	"fmt"
 	"strings"

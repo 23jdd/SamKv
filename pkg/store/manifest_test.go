@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证 Manifest 在重复 Checkpoint、文件删除和兼容旧目录时仍保持正确的 SSTable 顺序。
+
 import (
 	"os"
 	"path/filepath"

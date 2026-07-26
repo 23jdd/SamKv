@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证 Manifest/SSTable 格式版本的默认值、升级兼容和未来版本拒绝边界。
+
 import (
 	"os"
 	"path/filepath"
