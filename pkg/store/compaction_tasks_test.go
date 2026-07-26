@@ -200,3 +200,19 @@ func TestWriteCompactionOutputsCleansSuccessfulFilesAfterFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestCompactionWorkerCountUsesInputSize(t *testing.T) {
+	tables := []*SStable{{index: []IndexEntry{
+		{Handle: BlockHandle{Size: 8}},
+		{Handle: BlockHandle{Size: 9}},
+	}}}
+	if got := compactionWorkerCount(tables, []int{0}, 4, 8); got != 3 {
+		t.Fatalf("compactionWorkerCount() = %d, want 3", got)
+	}
+	if got := compactionWorkerCount(tables, []int{0}, 2, 8); got != 2 {
+		t.Fatalf("capped compactionWorkerCount() = %d, want 2", got)
+	}
+	if got := compactionWorkerCount(tables, []int{0}, 4, 64); got != 1 {
+		t.Fatalf("small compactionWorkerCount() = %d, want 1", got)
+	}
+}

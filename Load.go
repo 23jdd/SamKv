@@ -32,6 +32,9 @@ func LoadEnvFile(path string) store.Options {
 	if value, err := strconv.Atoi(os.Getenv("CompactionWorkers")); err == nil {
 		options.CompactionWorkers = value
 	}
+	if value, err := strconv.ParseInt(os.Getenv("CompactionTaskBytes"), 10, 64); err == nil {
+		options.CompactionTaskBytes = value
+	}
 	if value, err := strconv.Atoi(os.Getenv("Retention")); err == nil {
 		options.Retention = time.Duration(value) * time.Hour
 	}

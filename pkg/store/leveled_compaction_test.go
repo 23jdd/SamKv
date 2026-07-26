@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestCompactLevelPreservesTombstoneUntilBottomLevel(t *testing.T) {
 	options := DefaultOptions()
@@ -104,4 +107,69 @@ func countLevel(manifest Manifest, level int) int {
 		}
 	}
 	return count
+}
+
+func TestCompactLevelPublishesParallelOutputs(t *testing.T) {
+	dir := t.TempDir()
+	options := DefaultOptions()
+	options.AutoCheckpoint = false
+	options.CompactionThreshold = 0
+	options.CompactionWorkers = 3
+	options.CompactionTaskBytes = 1
+	database, err := NewStoreManagerWithOptions(dir, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keys := []string{"a", "c", "e", "g", "i", "k"}
+	for _, key := range keys {
+		if err := database.Put(key, "value-"+key); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Checkpoint(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := database.CompactLevel(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Subtasks != 3 || result.OutputTables != 3 || len(result.Paths) != 3 {
+		t.Fatalf("parallel compaction result = %#v", result)
+	}
+	if result.Path != result.Paths[0] || result.InputTables != len(keys) || result.OutputRecords != len(keys) {
+		t.Fatalf("compaction compatibility fields = %#v", result)
+	}
+	if database.manifest.NextFileID != 10 || countLevel(database.manifest, 0) != 0 || countLevel(database.manifest, 1) != 3 {
+		t.Fatalf("parallel manifest = %#v", database.manifest)
+	}
+	for index := 1; index < len(database.manifest.SSTables); index++ {
+		previous := database.manifest.SSTables[index-1]
+		current := database.manifest.SSTables[index]
+		if previous.MaxKey >= current.MinKey {
+			t.Fatalf("output ranges overlap: %#v and %#v", previous, current)
+		}
+	}
+	paths, err := filepath.Glob(filepath.Join(dir, "*.sst"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != result.OutputTables {
+		t.Fatalf("SSTable files = %d, want %d", len(paths), result.OutputTables)
+	}
+
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewStoreManagerWithOptions(dir, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	for _, key := range keys {
+		if value, ok := reopened.Get(key); !ok || value != "value-"+key {
+			t.Fatalf("Get(%q) = %q, %v after reopen", key, value, ok)
+		}
+	}
 }

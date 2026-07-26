@@ -55,36 +55,41 @@ func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 	}
 	st.stats.compactions.Add(1)
 
-	latest := make(map[string]Record)
-	for _, index := range selection.indexes {
-		records, err := tables[index].AllRecords()
-		if err != nil {
-			return result, err
-		}
-		result.InputRecords += len(records)
-		for _, record := range records {
-			latest[record.Key] = record
-		}
+	workers := compactionWorkerCount(tables, selection.indexes, options.CompactionWorkers, options.CompactionTaskBytes)
+	ranges := planCompactionRanges(tables, selection.indexes, workers)
+	result.Subtasks = len(ranges)
+	taskResults, err := runCompactionTasks(
+		tables,
+		selection.indexes,
+		ranges,
+		selection.targetLevel == options.MaxLevels-1,
+		options,
+		now,
+	)
+	if err != nil {
+		return result, err
 	}
-	records := compactLevelRecords(latest, selection.targetLevel == options.MaxLevels-1, options, now)
-	result.OutputRecords = len(records)
+	for _, taskResult := range taskResults {
+		result.InputRecords += taskResult.inputRecords
+		result.OutputRecords += len(taskResult.records)
+	}
 	result.DroppedRecords = result.InputRecords - result.OutputRecords
 
-	var (
-		newTable *SStable
-		path     string
-	)
-	if len(records) > 0 {
-		st.mu.RLock()
-		path = st.nextSSTablePathLocked()
-		st.mu.RUnlock()
-		var err error
-		newTable, err = WriteSStable(path, records)
-		if err != nil {
-			return result, err
-		}
-		newTable.SetBlockCache(st.blockCache)
-		result.Path = path
+	st.mu.RLock()
+	firstFileID := st.nextSSTableID
+	st.mu.RUnlock()
+	outputs, err := writeCompactionOutputs(st.dir, firstFileID, taskResults, st.blockCache)
+	if err != nil {
+		return result, err
+	}
+	result.OutputTables = len(outputs)
+	result.Paths = make([]string, len(outputs))
+	for index, output := range outputs {
+		result.Paths[index] = output.path
+	}
+	if len(result.Paths) > 0 {
+		// Path 保留为第一个输出，兼容只处理单输出的旧调用方。
+		result.Path = result.Paths[0]
 	}
 
 	selected := make(map[int]struct{}, len(selection.indexes))
@@ -99,45 +104,47 @@ func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 	st.mu.Lock()
 	if st.closed {
 		st.mu.Unlock()
-		cleanupCompactionOutput(newTable, path)
+		cleanupCompactionOutputs(outputs)
 		return result, ErrStoreClosed
 	}
-	if !sameTables(st.sstables, tables) {
+	if !sameTables(st.sstables, tables) || st.nextSSTableID != firstFileID {
 		st.mu.Unlock()
-		cleanupCompactionOutput(newTable, path)
+		cleanupCompactionOutputs(outputs)
 		return result, errors.New("store: sstable set changed during level compaction")
 	}
 
-	nextTables := make([]*SStable, 0, len(tables)-len(selected)+1)
-	nextEntries := make([]ManifestSSTable, 0, len(tables)-len(selected)+1)
+	nextTables := make([]*SStable, 0, len(tables)-len(selected)+len(outputs))
+	nextEntries := make([]ManifestSSTable, 0, len(tables)-len(selected)+len(outputs))
 	for index, table := range tables {
 		if _, ok := selected[index]; !ok {
 			nextTables = append(nextTables, table)
 			nextEntries = append(nextEntries, manifest.SSTables[index])
 		}
-		if index == insertAt && newTable != nil {
-			entry := manifestEntryFromSSTable(path, newTable)
-			entry.Level = selection.targetLevel
-			nextTables = append(nextTables, newTable)
-			nextEntries = append(nextEntries, entry)
+		if index == insertAt {
+			for _, output := range outputs {
+				entry := manifestEntryFromSSTable(output.path, output.table)
+				entry.Level = selection.targetLevel
+				nextTables = append(nextTables, output.table)
+				nextEntries = append(nextEntries, entry)
+			}
 		}
 	}
 
 	nextManifest := manifest
 	nextManifest.SSTables = nextEntries
 	nextManifest.LastSequence = st.sequence.Load()
-	if newTable != nil {
-		nextManifest.NextFileID = st.nextSSTableID + 1
+	if len(outputs) > 0 {
+		nextManifest.NextFileID = firstFileID + uint64(len(outputs))
 	}
 	if err := saveManifest(st.dir, nextManifest); err != nil {
 		st.mu.Unlock()
-		cleanupCompactionOutput(newTable, path)
+		cleanupCompactionOutputs(outputs)
 		return result, err
 	}
 	st.sstables = nextTables
 	st.manifest = nextManifest
-	if newTable != nil {
-		st.nextSSTableID++
+	if len(outputs) > 0 {
+		st.nextSSTableID = nextManifest.NextFileID
 	}
 	st.mu.Unlock()
 
@@ -147,7 +154,7 @@ func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 		oldPath := table.Path()
 		cleanupErr = errors.Join(cleanupErr, table.Close())
 		st.blockCache.removeFile(oldPath)
-		if oldPath != "" && oldPath != path {
+		if oldPath != "" {
 			if err := os.Remove(oldPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				cleanupErr = errors.Join(cleanupErr, err)
 			}
@@ -155,7 +162,6 @@ func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 	}
 	return result, cleanupErr
 }
-
 func selectLevelCompaction(manifest Manifest, sourceLevel int) levelCompactionSelection {
 	selection := levelCompactionSelection{sourceLevel: sourceLevel, targetLevel: sourceLevel + 1}
 	minKey, maxKey := "", ""

@@ -11,9 +11,12 @@ import (
 // CompactionResult 描述一次全量 Compaction 的输入、输出和清理数量。
 type CompactionResult struct {
 	Path           string
+	Paths          []string
 	SourceLevel    int
 	TargetLevel    int
 	InputTables    int
+	OutputTables   int
+	Subtasks       int
 	InputRecords   int
 	OutputRecords  int
 	DroppedRecords int
@@ -44,6 +47,7 @@ func (st *StoreManger) compactAll(forceRewrite bool) (CompactionResult, error) {
 	if len(tables) == 0 {
 		return result, nil
 	}
+	result.Subtasks = 1
 	if !forceRewrite && len(tables) == 1 && options.Retention == 0 && options.MaxSizeBytes == 0 {
 		return result, nil
 	}
@@ -106,6 +110,8 @@ func (st *StoreManger) compactAll(forceRewrite bool) (CompactionResult, error) {
 		}
 		newTable.SetBlockCache(st.blockCache)
 		result.Path = path
+		result.Paths = []string{path}
+		result.OutputTables = 1
 	}
 
 	st.mu.Lock()

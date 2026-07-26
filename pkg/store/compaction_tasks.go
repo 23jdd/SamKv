@@ -65,6 +65,33 @@ func planCompactionRanges(tables []*SStable, indexes []int, workers int) []compa
 	return append(ranges, compactionRange{startKey: startKey})
 }
 
+func compactionWorkerCount(tables []*SStable, indexes []int, maximum int, taskBytes int64) int {
+	if maximum <= 1 || taskBytes <= 0 {
+		return 1
+	}
+	var inputBytes uint64
+	for _, tableIndex := range indexes {
+		if tableIndex < 0 || tableIndex >= len(tables) || tables[tableIndex] == nil {
+			continue
+		}
+		for _, entry := range tables[tableIndex].index {
+			inputBytes += entry.Handle.Size
+		}
+	}
+	taskSize := uint64(taskBytes)
+	workers := inputBytes / taskSize
+	if inputBytes%taskSize != 0 {
+		workers++
+	}
+	if workers == 0 {
+		return 1
+	}
+	if workers >= uint64(maximum) {
+		return maximum
+	}
+	return int(workers)
+}
+
 // runCompactionTasks 并行扫描每个 key 区间，并在区间内保留最新版本。
 // 每个任务写入独立结果槽，因此返回顺序始终与 ranges 一致。
 func runCompactionTasks(
