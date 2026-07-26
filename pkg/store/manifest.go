@@ -64,6 +64,14 @@ func loadManifest(dir string) (Manifest, bool, error) {
 	if err != nil {
 		return Manifest{}, true, err
 	}
+	if filepath.Base(path) == manifestFileName || filepath.Base(path) == manifestFileName+".bak" {
+		if err := saveManifest(dir, manifest); err != nil {
+			return Manifest{}, true, err
+		}
+		_ = os.Remove(manifestPath(dir))
+		_ = os.Remove(manifestBackupPath(dir))
+		_ = syncStoreDirectory(dir)
+	}
 	return manifest, true, nil
 }
 func readManifest(path string) (Manifest, error) {
