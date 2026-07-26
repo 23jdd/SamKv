@@ -8,7 +8,7 @@ import (
 	"github.com/23jdd/SamKv/pkg/utils"
 )
 
-// CompactionResult 描述一次全量 Compaction 的输入、输出和清理数量。
+// CompactionResult 描述一次全量或分层 Compaction 的输入、输出和清理数量。
 type CompactionResult struct {
 	Path           string
 	Paths          []string

@@ -214,6 +214,9 @@ func writeCompactionOutputsWithWriter(
 		go func() {
 			defer waitGroup.Done()
 			outputs[index].table, errs[index] = write(outputs[index].path, outputs[index].records)
+			if errs[index] == nil && outputs[index].table == nil {
+				errs[index] = ErrInvalidSSTable
+			}
 			if errs[index] == nil {
 				outputs[index].table.SetBlockCache(cache)
 			}
@@ -229,6 +232,7 @@ func writeCompactionOutputsWithWriter(
 
 func cleanupCompactionOutputs(outputs []compactionOutput) {
 	for _, output := range outputs {
+		// table=nil 表示目标文件并非本次任务成功创建，不能按路径误删已有文件。
 		cleanupCompactionOutput(output.table, output.path)
 	}
 }

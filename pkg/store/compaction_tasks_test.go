@@ -176,6 +176,10 @@ func TestWriteCompactionOutputsSkipsEmptyRanges(t *testing.T) {
 
 func TestWriteCompactionOutputsCleansSuccessfulFilesAfterFailure(t *testing.T) {
 	dir := t.TempDir()
+	preexistingPath := sstablePath(dir, 8)
+	if err := os.WriteFile(preexistingPath, []byte("preexisting"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	results := []compactionTaskResult{
 		{keyRange: compactionRange{endKey: "m"}, records: []Record{{Key: "a", Val: "1"}}},
 		{keyRange: compactionRange{startKey: "m"}, records: []Record{{Key: "z", Val: "2"}}},
@@ -195,9 +199,23 @@ func TestWriteCompactionOutputsCleansSuccessfulFilesAfterFailure(t *testing.T) {
 		t.Fatal(readErr)
 	}
 	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) == ".sst" {
+		if filepath.Ext(entry.Name()) == ".sst" && entry.Name() != filepath.Base(preexistingPath) {
 			t.Fatalf("failed output left behind %q", entry.Name())
 		}
+	}
+	data, readErr := os.ReadFile(preexistingPath)
+	if readErr != nil || string(data) != "preexisting" {
+		t.Fatalf("preexisting output = %q, %v", data, readErr)
+	}
+}
+
+func TestWriteCompactionOutputsRejectsNilSuccessfulTable(t *testing.T) {
+	results := []compactionTaskResult{{records: []Record{{Key: "a", Val: "1"}}}}
+	_, err := writeCompactionOutputsWithWriter(t.TempDir(), 1, results, nil, func(string, []Record) (*SStable, error) {
+		return nil, nil
+	})
+	if !errors.Is(err, ErrInvalidSSTable) {
+		t.Fatalf("writeCompactionOutputsWithWriter() error = %v, want %v", err, ErrInvalidSSTable)
 	}
 }
 

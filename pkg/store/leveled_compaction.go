@@ -276,9 +276,10 @@ func (st *StoreManger) levelCapacity(level int) int64 {
 }
 
 func cleanupCompactionOutput(table *SStable, path string) {
-	if table != nil {
-		_ = table.Close()
+	if table == nil {
+		return
 	}
+	_ = table.Close()
 	if path != "" {
 		_ = os.Remove(path)
 	}
