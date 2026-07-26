@@ -34,6 +34,8 @@ func formatPrometheusMetrics(stats store.Stats) string {
 	writeMetric("samkv_read_operations_total", "Total Store read operations.", "counter", stats.ReadOperations)
 	writeMetric("samkv_checkpoints_total", "Total completed checkpoints.", "counter", stats.Checkpoints)
 	writeMetric("samkv_compactions_total", "Total started compactions.", "counter", stats.Compactions)
+	writeMetric("samkv_compaction_subtasks_total", "Total started compaction key-range subtasks.", "counter", stats.CompactionSubtasks)
+	writeMetric("samkv_compaction_output_files_total", "Total SSTable files published by compactions.", "counter", stats.CompactionOutputFiles)
 	writeMetric("samkv_active_memtable_entries", "Entries in the active MemTable.", "gauge", stats.ActiveMemTableEntries)
 	writeMetric("samkv_active_memtable_bytes", "Approximate bytes in the active MemTable.", "gauge", stats.ActiveMemTableBytes)
 	writeMetric("samkv_immutable_memtables", "Immutable MemTables waiting for flush.", "gauge", stats.ImmutableMemTables)

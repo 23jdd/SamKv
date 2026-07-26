@@ -158,6 +158,10 @@ func TestCompactLevelPublishesParallelOutputs(t *testing.T) {
 	if len(paths) != result.OutputTables {
 		t.Fatalf("SSTable files = %d, want %d", len(paths), result.OutputTables)
 	}
+	stats := database.Stats()
+	if stats.CompactionSubtasks != 3 || stats.CompactionOutputFiles != 3 {
+		t.Fatalf("parallel compaction stats = %#v", stats)
+	}
 
 	if err := database.Close(); err != nil {
 		t.Fatal(err)

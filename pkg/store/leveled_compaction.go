@@ -58,6 +58,7 @@ func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 	workers := compactionWorkerCount(tables, selection.indexes, options.CompactionWorkers, options.CompactionTaskBytes)
 	ranges := planCompactionRanges(tables, selection.indexes, workers)
 	result.Subtasks = len(ranges)
+	st.stats.compactionTasks.Add(uint64(result.Subtasks))
 	taskResults, err := runCompactionTasks(
 		tables,
 		selection.indexes,
@@ -143,6 +144,7 @@ func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 	}
 	st.sstables = nextTables
 	st.manifest = nextManifest
+	st.stats.compactionFiles.Add(uint64(len(outputs)))
 	if len(outputs) > 0 {
 		st.nextSSTableID = nextManifest.NextFileID
 	}

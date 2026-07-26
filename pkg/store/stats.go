@@ -11,6 +11,8 @@ type statsCounters struct {
 	readOperations  atomic.Uint64
 	checkpoints     atomic.Uint64
 	compactions     atomic.Uint64
+	compactionTasks atomic.Uint64
+	compactionFiles atomic.Uint64
 }
 
 // Stats 是 Store 当前运行状态的只读快照。
@@ -19,6 +21,8 @@ type Stats struct {
 	ReadOperations        uint64
 	Checkpoints           uint64
 	Compactions           uint64
+	CompactionSubtasks    uint64
+	CompactionOutputFiles uint64
 	ActiveMemTableEntries int
 	ActiveMemTableBytes   int
 	ImmutableMemTables    int
@@ -35,11 +39,13 @@ type Stats struct {
 // Stats 返回写入、查询、内存、WAL、SSTable 和后台错误统计。
 func (st *StoreManger) Stats() Stats {
 	stats := Stats{
-		WriteOperations: st.stats.writeOperations.Load(),
-		ReadOperations:  st.stats.readOperations.Load(),
-		Checkpoints:     st.stats.checkpoints.Load(),
-		Compactions:     st.stats.compactions.Load(),
-		LevelTables:     make(map[int]int),
+		WriteOperations:       st.stats.writeOperations.Load(),
+		ReadOperations:        st.stats.readOperations.Load(),
+		Checkpoints:           st.stats.checkpoints.Load(),
+		Compactions:           st.stats.compactions.Load(),
+		CompactionSubtasks:    st.stats.compactionTasks.Load(),
+		CompactionOutputFiles: st.stats.compactionFiles.Load(),
+		LevelTables:           make(map[int]int),
 	}
 
 	st.mu.RLock()

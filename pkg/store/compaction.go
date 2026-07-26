@@ -47,10 +47,11 @@ func (st *StoreManger) compactAll(forceRewrite bool) (CompactionResult, error) {
 	if len(tables) == 0 {
 		return result, nil
 	}
-	result.Subtasks = 1
 	if !forceRewrite && len(tables) == 1 && options.Retention == 0 && options.MaxSizeBytes == 0 {
 		return result, nil
 	}
+	result.Subtasks = 1
+	st.stats.compactionTasks.Add(1)
 
 	latest := make(map[string]Record)
 	for _, table := range tables {
@@ -158,6 +159,7 @@ func (st *StoreManger) compactAll(forceRewrite bool) (CompactionResult, error) {
 		st.nextSSTableID++
 	}
 	st.manifest = nextManifest
+	st.stats.compactionFiles.Add(uint64(result.OutputTables))
 	st.mu.Unlock()
 
 	var cleanupErr error

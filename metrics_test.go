@@ -28,6 +28,8 @@ func TestMetricsEndpointReportsStoreOperations(t *testing.T) {
 		"samkv_read_operations_total 1",
 		"samkv_background_error 0",
 		"samkv_block_cache_hits_total",
+		"samkv_compaction_subtasks_total",
+		"samkv_compaction_output_files_total",
 	} {
 		if !strings.Contains(response.Body.String(), metric) {
 			t.Fatalf("metrics does not contain %q:\n%s", metric, response.Body.String())
