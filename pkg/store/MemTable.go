@@ -39,7 +39,8 @@ type MemTable struct {
 	size  atomic.Int64
 	limit atomic.Int64
 
-	mutable atomic.Bool
+	mutable          atomic.Bool
+	walSegmentCutoff atomic.Uint64
 }
 
 // Compare 定义 MemTable 中 key 的排序方式。
@@ -144,6 +145,17 @@ func (mt *MemTable) MarkImmutable() {
 	mt.mutable.Store(false)
 }
 
+// SetWALSegmentCutoff 记录该不可变表对应的最后一个 WAL segment。
+// Store 在 Manifest 发布成功后才能调用 PruneThrough 删除此边界及以前的段。
+func (mt *MemTable) SetWALSegmentCutoff(segmentID uint64) {
+	mt.walSegmentCutoff.Store(segmentID)
+}
+
+// WALSegmentCutoff 返回冻结时封存的 WAL segment ID；0 表示没有可回收段。
+func (mt *MemTable) WALSegmentCutoff() uint64 {
+	return mt.walSegmentCutoff.Load()
+}
+
 // Mutable 返回当前 MemTable 是否仍允许写入。
 func (mt *MemTable) Mutable() bool {
 	return mt.mutable.Load()
@@ -172,6 +184,7 @@ func (mt *MemTable) ShouldFlush() bool {
 func (mt *MemTable) Clear() {
 	mt.table.Clear()
 	mt.size.Store(0)
+	mt.walSegmentCutoff.Store(0)
 	mt.mutable.Store(true)
 }
 

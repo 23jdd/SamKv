@@ -132,8 +132,11 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 
 	st.mu.Lock()
 	if st.options.AutoCheckpoint && st.mem.ShouldFlush() {
-		st.freezeActiveLocked()
-		st.scheduleFlushLocked()
+		if _, err := st.freezeActiveLocked(); err != nil {
+			st.backgroundErr = err
+		} else {
+			st.scheduleFlushLocked()
+		}
 	}
 	st.mu.Unlock()
 	return st, nil
@@ -246,18 +249,26 @@ func (st *StoreManger) maybeFreezeLocked() {
 	if !st.options.AutoCheckpoint || !st.mem.ShouldFlush() {
 		return
 	}
-	st.freezeActiveLocked()
+	if _, err := st.freezeActiveLocked(); err != nil {
+		st.backgroundErr = err
+		return
+	}
 	st.scheduleFlushLocked()
 }
 
-func (st *StoreManger) freezeActiveLocked() bool {
+func (st *StoreManger) freezeActiveLocked() (bool, error) {
 	if st.mem.Len() == 0 {
-		return false
+		return false, nil
 	}
+	sealedSegment, err := st.wm.Rotate()
+	if err != nil {
+		return false, err
+	}
+	st.mem.SetWALSegmentCutoff(sealedSegment)
 	st.mem.MarkImmutable()
 	st.immutables = append(st.immutables, st.mem)
 	st.mem = NewMemTable(st.options.MemTableLimit)
-	return true
+	return true, nil
 }
 
 func (st *StoreManger) scheduleFlushLocked() {
@@ -305,7 +316,8 @@ func (st *StoreManger) closeSSTablesLocked() error {
 }
 
 // Checkpoint 冻结当前活动 MemTable，并同步等待所有 Immutable MemTable 完成刷盘。
-// 一致性顺序是 WAL Flush -> 写 SSTable -> 发布 MANIFEST -> 用剩余内存表重写 WAL；任何较早步骤失败都不会遗失已确认写入。
+// 一致性顺序是封存 WAL segment -> 写并发布 SSTable -> 发布 Manifest -> 回收已封存 segment。
+// Manifest 发布前 WAL 保持完整；发布后即使旧段尚未删除也只会在恢复时产生可覆盖的重复记录。
 // 返回值是最后生成的 SSTable 路径；没有待刷数据时为空，但仍会按 WALSyncPolicy 完成一次 Flush。
 func (st *StoreManger) Checkpoint() (string, error) {
 	st.mu.Lock()
@@ -313,8 +325,11 @@ func (st *StoreManger) Checkpoint() (string, error) {
 		st.mu.Unlock()
 		return "", ErrStoreClosed
 	}
-	st.freezeActiveLocked()
+	_, freezeErr := st.freezeActiveLocked()
 	st.mu.Unlock()
+	if freezeErr != nil {
+		return "", freezeErr
+	}
 
 	path, err := st.flushAllImmutables()
 	if err != nil {
@@ -355,6 +370,7 @@ func (st *StoreManger) flushOldestImmutable() (string, bool, error) {
 		return "", false, nil
 	}
 	immutable := st.immutables[0]
+	walCutoff := immutable.WALSegmentCutoff()
 	path := st.nextSSTablePathLocked()
 	st.mu.RUnlock()
 
@@ -391,48 +407,14 @@ func (st *StoreManger) flushOldestImmutable() (string, bool, error) {
 	st.manifest = nextManifest
 	st.immutables = st.immutables[1:]
 
-	walSnapshot, err := st.encodeWALSnapshotLocked()
-	if err != nil {
-		return path, true, err
-	}
-	if err := st.wm.Replace(walSnapshot); err != nil {
+	if _, err := st.wm.PruneThrough(walCutoff); err != nil {
 		return path, true, err
 	}
 	st.scheduleCompactionLocked()
 	return path, true, nil
 }
 
-func (st *StoreManger) encodeWALSnapshotLocked() ([]byte, error) {
-	var data []byte
-	appendRecords := func(records []Record) error {
-		for _, record := range records {
-			var walRecord *wal.Record
-			if record.Deleted {
-				walRecord = wal.DeleteRecord([]byte(record.Key))
-			} else {
-				walRecord = wal.PutRecord([]byte(record.Key), []byte(record.Val))
-			}
-			encoded, err := walRecord.Encode()
-			if err != nil {
-				return err
-			}
-			data = append(data, encoded...)
-		}
-		return nil
-	}
-
-	for _, immutable := range st.immutables {
-		if err := appendRecords(immutable.Entries()); err != nil {
-			return nil, err
-		}
-	}
-	if err := appendRecords(st.mem.Entries()); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-// ReLoad 清空内存表并重新回放 wal.log。
+// ReLoad 清空内存表并重新回放全部 WAL segment。
 // 正常启动不需要手动调用；NewStoreMangerWithOptions 已自动恢复。
 func (st *StoreManger) ReLoad() error {
 	st.maintenanceMu.Lock()
