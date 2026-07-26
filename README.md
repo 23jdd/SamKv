@@ -13,6 +13,7 @@ SamKv 是一个使用 Go 实现、面向结构化日志场景的单机 LSM-Tree 
 - [HTTP API](#http-api)
 - [命令行工具](#命令行工具)
 - [Go API](#go-api)
+- [代码文档与示例](#代码文档与示例)
 - [QueryFormat](#queryformat)
 - [配置](#配置)
 - [存储与恢复](#存储与恢复)
@@ -115,7 +116,7 @@ curl -X POST http://127.0.0.1:9999/logs/batch \
 
 ### 结构化日志查询
 
-`query` 参数使用 [QueryFormat](#queryformat)。matcher 会对日志 `message` 执行区分大小写的字节子串过滤，标签执行等值子集匹配：
+`query` 参数使用 [QueryFormat](#queryformat)。matcher 会对日志 `message` 执行区分大小写的 Unicode 码点匹配，服务在 matcher 两侧补 `%` 实现“内容包含”语义，标签执行等值子集匹配：
 
 ```bash
 curl -G http://127.0.0.1:9999/logs/query \
@@ -252,7 +253,7 @@ logs, err := db.Query(end.Add(-time.Hour), end, []utils.Label{
 _, _, _, _, _, _ = value, found, records, sequence, logs, err
 ```
 
-`Get` 为兼容旧调用保留；需要区分“不存在”和“读取损坏”时应使用 `GetWithError`。`Query` 使用闭区间 `[startTime, endTime]`，标签是子集匹配。
+`Get` 为兼容旧调用保留；需要区分“不存在”和“读取损坏”时应使用 `GetWithError`。`Query` 使用闭区间 `[startTime, endTime]`，标签是子集匹配。普通 KV 的 key 不是结构化日志 key，不能用于 `Query`、基于时间的 `Retention` 或按时间淘汰的 `MaxSizeBytes`。
 
 ### 批量、Compaction 与维护
 
@@ -285,6 +286,39 @@ _, _, _, _, _, _ = result, verification, backup, upgrade, stats, err
 
 墓碑、`Retention` 和 `MaxSizeBytes` 只在最底层回收，避免旧值重新出现。`MaxSizeBytes` 对全部子任务结果统一计算，不会被每个子任务重复使用。`Compact()` 保留为显式全量整理入口；它仍是单任务全量整理。`CompactionResult.Path` 保留为首个输出路径，新增代码应使用 `Paths`、`OutputTables` 和 `Subtasks` 查看并行结果。
 
+## 代码文档与示例
+
+所有 Go 源文件都在文件或包入口说明了自身职责；核心 API 旁边继续说明并发、持久性、格式和失败边界。测试文件的文件注释说明该文件覆盖的行为，便于从失败测试快速定位对应模块。
+
+查看包文档和运行可执行 Example：
+
+```bash
+go doc ./pkg/store
+go doc ./pkg/wal
+go doc ./pkg/utils
+go test ./... -run '^Example'
+```
+
+当前 Example 覆盖以下完整流程：
+
+| 模块 | Example |
+| --- | --- |
+| Store | MemTable、Batch、BloomFilter、SSTable、Checkpoint、分层 Compaction、结构化日志、备份恢复 |
+| WAL | Record 编解码、打开/追加/读取/关闭 |
+| Utils | 复合日志 Key、压缩 Value |
+| Parse | QueryFormat 解析与时间窗口 |
+| HTTP | 使用 `httptest` 完成 KV PUT/GET |
+| CLI | `samctl` 的 IPv6 地址构造 |
+| Pool / SkipList | 分级缓冲池复用、有序并发表的写入读取 |
+
+Example 是测试的一部分，输出变化会让 `go test` 失败，因此它们同时承担用法文档和回归检查。边界条件仍以 API 旁的 GoDoc 为准，例如：
+
+- `Options{}` 不是合法完整配置，应从 `DefaultOptions()` 开始修改。
+- `Scan` 是 `[startKey,endKey)`；日志 `Query` 是闭区间 `[startTime,endTime]`。
+- 墓碑、`Retention` 和 `MaxSizeBytes` 只在覆盖全部旧版本的最底层 Compaction 回收。
+- `Backup`/`RestoreBackup` 不覆盖已有目录；`RepairDirectory` 必须离线执行并可能永久移除损坏表中的数据。
+- HTTP/CLI 的单请求或单响应上限为 64 MiB；服务当前没有 TLS、认证或限流。
+
 ## QueryFormat
 
 [`pkg/parse`](./pkg/parse) 使用 Participle 解析：
@@ -301,12 +335,13 @@ error{app=nginx}[5m]
 ```
 
 - `matcher` 必填，可以是标识符、数字或带引号字符串。
-- 支持中文、emoji 等任意 Unicode 字符
-- `matcher` 支持三种通配符：%匹配任意长度字符串（包括空串） _    匹配恰好一个任意字符 [..] 匹配方括号内任意一个字符
+- 支持中文、emoji 等任意 Unicode 字符。
+- 不支持通配符转义、字符范围或嵌套字符类；不完整的 `[` 字符类视为不匹配。
+- `matcher` 支持三种通配符：`%` 匹配任意长度字符串（包括空串），`_` 匹配一个字符，`[abc]` 匹配字符类中的一个字符。
 - 标签只支持等值匹配，标签名不能重复；`{}` 表示不限制标签。
 - `range` 必须大于 0，格式遵循 `time.ParseDuration`。
 - `offset` 可选，用于把整个查询窗口向过去平移。
-- HTTP 查询先使用时间和标签索引缩小候选集，再对日志内容执行 matcher 子串过滤。
+- HTTP 查询先使用时间和标签索引缩小候选集，再对日志内容执行 matcher 通配符过滤。
 
 ```go
 query, err := parse.ParseQueryFormat(
