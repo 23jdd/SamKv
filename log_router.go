@@ -149,17 +149,28 @@ func (handler *logHTTPHandler) query(c *gin.Context) {
 		End:     end,
 		Entries: make([]logEntryResponse, 0, min(len(entries), limit)),
 	}
-	matcher := []byte(query.Query)
-	for _, entry := range entries {
-		if !Matcher(entry.Message, matcher) {
-			continue
+	if len(query.Query) == 0 {
+		for _, entry := range entries {
+			if len(response.Entries) == limit {
+				response.Truncated = true
+				break
+			}
+			response.Entries = append(response.Entries, newLogEntryResponse(entry))
 		}
-		if len(response.Entries) == limit {
-			response.Truncated = true
-			break
+	} else {
+		matcher := []byte("%" + query.Query + "%")
+		for _, entry := range entries {
+			if !Matcher(entry.Message, matcher) {
+				continue
+			}
+			if len(response.Entries) == limit {
+				response.Truncated = true
+				break
+			}
+			response.Entries = append(response.Entries, newLogEntryResponse(entry))
 		}
-		response.Entries = append(response.Entries, newLogEntryResponse(entry))
 	}
+
 	c.JSON(http.StatusOK, response)
 }
 

@@ -37,7 +37,7 @@ func TestLogQueryUsesTimeLabelsAndMatcher(t *testing.T) {
 func TestLogQueryReportsTruncationAfterMatcherFiltering(t *testing.T) {
 	router := newTestRouter(t)
 	timestamp := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
-	for i := 0; i < 2; i++ {
+	for i :=range 2 {
 		writeLogForQueryTest(t, router, timestamp, map[string]string{"app": "api"}, fmt.Sprintf("error %d", i))
 	}
 	expression := `error{app=api}[1h]`
