@@ -35,11 +35,12 @@ type StoreManger struct {
 	options    Options
 	blockCache *BlockCache
 
-	sstables      []*SStable
-	nextSSTableID uint64
-	manifest      Manifest
-	sequence      atomic.Uint64
-	stats         statsCounters
+	sstables       []*SStable
+	nextSSTableID  uint64
+	manifest       Manifest
+	sequence       atomic.Uint64
+	stats          statsCounters
+	recoveryReport wal.RecoveryReport
 
 	flushCh       chan struct{}
 	compactionCh  chan struct{}
@@ -110,12 +111,14 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 		_ = dirLock.release()
 		return nil, err
 	}
-	if err := RecoverWALFile(filepath.Join(dir, "wal.log"), st.mem); err != nil {
+	recoveryReport, err := RecoverWALDirectory(dir, st.mem)
+	if err != nil {
 		st.closeSSTablesLocked()
 		_ = wm.Close()
 		_ = dirLock.release()
 		return nil, err
 	}
+	st.recoveryReport = recoveryReport
 	st.sequence.Store(st.manifest.LastSequence)
 	if err := st.restoreSequence(); err != nil {
 		st.closeSSTablesLocked()
@@ -445,9 +448,11 @@ func (st *StoreManger) ReLoad() error {
 	}
 	st.mem = NewMemTable(st.options.MemTableLimit)
 	st.immutables = nil
-	if err := RecoverWALFile(filepath.Join(st.dir, "wal.log"), st.mem); err != nil {
+	recoveryReport, err := RecoverWALDirectory(st.dir, st.mem)
+	if err != nil {
 		return err
 	}
+	st.recoveryReport = recoveryReport
 	return st.restoreSequence()
 }
 

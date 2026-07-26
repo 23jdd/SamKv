@@ -4,8 +4,9 @@ package store
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
+
+	"github.com/23jdd/SamKv/pkg/wal"
 )
 
 func TestStoreAutomaticallyRecoversWAL(t *testing.T) {
@@ -46,7 +47,11 @@ func TestStoreRepairsIncompleteWALTailBeforeAppending(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	walPath := filepath.Join(dir, "wal.log")
+	segments, err := wal.ListSegments(dir)
+	if err != nil || len(segments) != 1 {
+		t.Fatalf("ListSegments() = %v, %v", segments, err)
+	}
+	walPath := segments[0].Path
 	info, err := os.Stat(walPath)
 	if err != nil {
 		t.Fatal(err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/23jdd/SamKv/pkg/wal"
 )
@@ -28,9 +29,24 @@ func Recover(reader io.Reader, mem *MemTable) error {
 	}
 }
 
-// RecoverWALFile 回放 WAL 文件，并截断崩溃留下的不完整尾部。
-// 截断很重要，否则新记录追加到半条记录后面会让后续恢复永远失败。
-// 文件不存在视为空 WAL；校验和错误或非法类型不会被截断掩盖，而是返回给调用方。
+// RecoverWALDirectory 按 segment ID 顺序回放目录中的 WAL。
+// 新格式默认跳过长度完整的坏 record 并修复末段半条尾记录；没有 segment 时兼容旧 wal.log。
+func RecoverWALDirectory(dir string, mem *MemTable) (wal.RecoveryReport, error) {
+	segments, err := wal.ListSegments(dir)
+	if err != nil {
+		return wal.RecoveryReport{}, err
+	}
+	if len(segments) == 0 {
+		err := RecoverWALFile(filepath.Join(dir, "wal.log"), mem)
+		return wal.RecoveryReport{Records: mem.Len()}, err
+	}
+	return wal.ReplaySegments(dir, wal.DefaultRecoveryOptions(), func(record *wal.Record) error {
+		return applyWALRecord(mem, record)
+	})
+}
+
+// RecoverWALFile 回放单个旧版 WAL 文件，并截断崩溃留下的不完整尾部。
+// 文件不存在视为空 WAL；新代码应使用 RecoverWALDirectory。
 func RecoverWALFile(path string, mem *MemTable) error {
 	file, err := os.OpenFile(path, os.O_RDWR, 0644)
 	if errors.Is(err, os.ErrNotExist) {

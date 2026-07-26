@@ -33,7 +33,7 @@ func RepairDirectory(dir string) (RepairReport, error) {
 
 	var report RepairReport
 	recovered := NewMemTable(0)
-	if err := RecoverWALFile(filepath.Join(dir, "wal.log"), recovered); err != nil {
+	if _, err := RecoverWALDirectory(dir, recovered); err != nil {
 		return report, fmt.Errorf("repair WAL: %w", err)
 	}
 	report.WALRecords = recovered.Len()

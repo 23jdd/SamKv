@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/23jdd/SamKv/pkg/wal"
 )
 
 const (
@@ -89,7 +91,14 @@ func (st *StoreManger) Backup(destination string) (BackupMetadata, error) {
 		}
 	}
 
-	fileNames := []string{manifestFileName, "wal.log"}
+	fileNames := []string{manifestFileName}
+	segments, err := wal.ListSegments(st.dir)
+	if err != nil {
+		return BackupMetadata{}, err
+	}
+	for _, segment := range segments {
+		fileNames = append(fileNames, filepath.Base(segment.Path))
+	}
 	for _, entry := range st.manifest.SSTables {
 		fileNames = append(fileNames, entry.File)
 	}
@@ -151,10 +160,18 @@ func VerifyBackup(source string) (BackupMetadata, error) {
 		}
 		available[expected.Name] = struct{}{}
 	}
-	for _, required := range []string{manifestFileName, "wal.log"} {
-		if _, ok := available[required]; !ok {
-			return BackupMetadata{}, fmt.Errorf("store: backup is missing %s", required)
+	if _, ok := available[manifestFileName]; !ok {
+		return BackupMetadata{}, fmt.Errorf("store: backup is missing %s", manifestFileName)
+	}
+	hasWALSegment := false
+	for name := range available {
+		if _, ok := wal.ParseSegmentID(name); ok {
+			hasWALSegment = true
+			break
 		}
+	}
+	if !hasWALSegment {
+		return BackupMetadata{}, errors.New("store: backup is missing WAL segments")
 	}
 	manifest, err := readManifest(filepath.Join(source, manifestFileName))
 	if err != nil {

@@ -4,7 +4,6 @@ package store
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -26,7 +25,7 @@ func TestStoreStrictDurabilityWritesWALBeforePutReturns(t *testing.T) {
 	}
 
 	recovered := NewMemTable(0)
-	if err := RecoverWALFile(filepath.Join(database.dir, "wal.log"), recovered); err != nil {
+	if _, err := RecoverWALDirectory(database.dir, recovered); err != nil {
 		t.Fatal(err)
 	}
 	if value, ok := recovered.Get("durable"); !ok || value != "value" {

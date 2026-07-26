@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/23jdd/SamKv/pkg/wal"
 )
 
 func TestStoreCheckpointWritesSSTableAndResetsWAL(t *testing.T) {
@@ -58,12 +60,16 @@ func TestStoreCheckpointWritesSSTableAndResetsWAL(t *testing.T) {
 		t.Fatalf("Get(a) after checkpoint = %q, %v; want 1, true", value, ok)
 	}
 
-	walInfo, err := os.Stat(filepath.Join(dir, "wal.log"))
+	segments, err := wal.ListSegments(dir)
 	if err != nil {
-		t.Fatalf("wal stat error = %v", err)
+		t.Fatalf("list WAL segments: %v", err)
 	}
-	if walInfo.Size() != 0 {
-		t.Fatalf("wal size after checkpoint = %d, want 0", walInfo.Size())
+	var walBytes int64
+	for _, segment := range segments {
+		walBytes += segment.Size
+	}
+	if walBytes != 0 {
+		t.Fatalf("WAL bytes after checkpoint = %d, want 0", walBytes)
 	}
 }
 

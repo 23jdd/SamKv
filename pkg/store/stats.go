@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+
+	"github.com/23jdd/SamKv/pkg/wal"
 )
 
 type statsCounters struct {
@@ -20,23 +22,26 @@ type statsCounters struct {
 
 // Stats 是 Store 当前运行状态的只读快照。
 type Stats struct {
-	WriteOperations       uint64
-	ReadOperations        uint64
-	Checkpoints           uint64
-	Compactions           uint64
-	CompactionSubtasks    uint64
-	CompactionOutputFiles uint64
-	ActiveMemTableEntries int
-	ActiveMemTableBytes   int
-	ImmutableMemTables    int
-	ImmutableEntries      int
-	SSTables              int
-	SSTableRecords        uint64
-	WALBytes              int64
-	SSTableBytes          int64
-	LevelTables           map[int]int
-	BlockCache            BlockCacheStats
-	BackgroundError       error
+	WriteOperations           uint64
+	ReadOperations            uint64
+	Checkpoints               uint64
+	Compactions               uint64
+	CompactionSubtasks        uint64
+	CompactionOutputFiles     uint64
+	ActiveMemTableEntries     int
+	ActiveMemTableBytes       int
+	ImmutableMemTables        int
+	ImmutableEntries          int
+	SSTables                  int
+	SSTableRecords            uint64
+	WALBytes                  int64
+	WALSegments               int
+	WALRecoverySkippedRecords int
+	WALRecoveryTruncatedBytes int64
+	SSTableBytes              int64
+	LevelTables               map[int]int
+	BlockCache                BlockCacheStats
+	BackgroundError           error
 }
 
 // Stats 返回写入、查询、内存、WAL、SSTable 和后台错误统计。
@@ -67,11 +72,15 @@ func (st *StoreManger) Stats() Stats {
 		stats.LevelTables[entry.Level]++
 		sstablePaths = append(sstablePaths, filepath.Join(st.dir, entry.File))
 	}
-	walPath := filepath.Join(st.dir, "wal.log")
+	stats.WALRecoverySkippedRecords = st.recoveryReport.SkippedRecords
+	stats.WALRecoveryTruncatedBytes = st.recoveryReport.TruncatedBytes
 	st.mu.RUnlock()
 
-	if info, err := os.Stat(walPath); err == nil {
-		stats.WALBytes = info.Size()
+	if segments, err := wal.ListSegments(st.dir); err == nil {
+		stats.WALSegments = len(segments)
+		for _, segment := range segments {
+			stats.WALBytes += segment.Size
+		}
 	}
 	stats.BlockCache = st.blockCache.Stats()
 	for _, path := range sstablePaths {
