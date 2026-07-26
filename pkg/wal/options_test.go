@@ -16,6 +16,20 @@ func TestDefaultOptionsUses64KiBBuffer(t *testing.T) {
 	if options.BufferSize != 64*1024 {
 		t.Fatalf("BufferSize = %d, want %d", options.BufferSize, 64*1024)
 	}
+	if options.SegmentSize != DefaultSegmentSize {
+		t.Fatalf("SegmentSize = %d, want %d", options.SegmentSize, DefaultSegmentSize)
+	}
+	if options.SegmentMaxRecords != 0 {
+		t.Fatalf("SegmentMaxRecords = %d, want disabled", options.SegmentMaxRecords)
+	}
+}
+
+func TestOptionsRejectNonPositiveSegmentSize(t *testing.T) {
+	options := DefaultOptions()
+	options.SegmentSize = 0
+	if _, err := NewWithOptions(t.TempDir(), options); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("NewWithOptions() error = %v, want ErrInvalidOptions", err)
+	}
 }
 
 func TestNewWithOptionsRejectsInvalidConfiguration(t *testing.T) {

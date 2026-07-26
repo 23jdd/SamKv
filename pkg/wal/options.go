@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+const (
+	// DefaultSegmentSize 是 WAL 单个 segment 的默认目标大小。
+	// 完整 record 不会跨 segment 拆分，因此文件可能被最后一次 append 略微撑大。
+	DefaultSegmentSize int64 = 64 << 20
+)
+
 // SyncPolicy 控制 AppendLog 返回前 WAL 数据需要达到的持久化程度。
 type SyncPolicy uint8
 
@@ -30,6 +36,10 @@ type Options struct {
 	SyncPolicy SyncPolicy
 	// SyncInterval 仅供 SyncInterval 策略使用，必须大于 0；严格模式会忽略它。
 	SyncInterval time.Duration
+	// SegmentSize 是触发 WAL segment 轮转的目标字节数，必须大于 0。
+	SegmentSize int64
+	// SegmentMaxRecords 是单段最多容纳的 record 数；0 表示只按 SegmentSize 轮转。
+	SegmentMaxRecords uint64
 }
 
 // DefaultOptions 返回 64 KiB 缓冲区和 50 ms 周期同步配置。
@@ -38,11 +48,12 @@ func DefaultOptions() Options {
 		BufferSize:   DefaultSize,
 		SyncPolicy:   SyncInterval,
 		SyncInterval: FlushInterval,
+		SegmentSize:  DefaultSegmentSize,
 	}
 }
 
 func validateOptions(options Options) error {
-	if options.BufferSize <= 0 {
+	if options.BufferSize <= 0 || options.SegmentSize <= 0 {
 		return ErrInvalidOptions
 	}
 	if options.SyncPolicy != SyncInterval && options.SyncPolicy != SyncEveryWrite {
