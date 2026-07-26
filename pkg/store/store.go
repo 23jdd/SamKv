@@ -571,7 +571,11 @@ func manifestFromSSTables(nextFileID uint64, paths []string, tables []*SStable) 
 }
 
 func (st *StoreManger) nextSSTablePathLocked() string {
-	return filepath.Join(st.dir, fmt.Sprintf("%020d.sst", st.nextSSTableID))
+	return sstablePath(st.dir, st.nextSSTableID)
+}
+
+func sstablePath(dir string, id uint64) string {
+	return filepath.Join(dir, fmt.Sprintf("%020d.sst", id))
 }
 
 func sstableID(path string) (uint64, bool) {

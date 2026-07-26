@@ -2,7 +2,10 @@ package store
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -142,5 +145,58 @@ func TestRunCompactionTasksRejectsInvalidInputTable(t *testing.T) {
 	)
 	if !errors.Is(err, ErrInvalidSSTable) {
 		t.Fatalf("runCompactionTasks() error = %v, want %v", err, ErrInvalidSSTable)
+	}
+}
+
+func TestWriteCompactionOutputsSkipsEmptyRanges(t *testing.T) {
+	dir := t.TempDir()
+	results := []compactionTaskResult{
+		{keyRange: compactionRange{endKey: "m"}, records: []Record{{Key: "a", Val: "1"}}},
+		{keyRange: compactionRange{startKey: "m", endKey: "z"}},
+		{keyRange: compactionRange{startKey: "z"}, records: []Record{{Key: "z", Val: "2"}}},
+	}
+	outputs, err := writeCompactionOutputs(dir, 7, results, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupCompactionOutputs(outputs)
+
+	if len(outputs) != 2 {
+		t.Fatalf("output count = %d, want 2", len(outputs))
+	}
+	for index, wantID := range []uint64{7, 8} {
+		if outputs[index].path != sstablePath(dir, wantID) {
+			t.Fatalf("output %d path = %q", index, outputs[index].path)
+		}
+		if _, err := os.Stat(outputs[index].path); err != nil {
+			t.Fatalf("stat output %d: %v", index, err)
+		}
+	}
+}
+
+func TestWriteCompactionOutputsCleansSuccessfulFilesAfterFailure(t *testing.T) {
+	dir := t.TempDir()
+	results := []compactionTaskResult{
+		{keyRange: compactionRange{endKey: "m"}, records: []Record{{Key: "a", Val: "1"}}},
+		{keyRange: compactionRange{startKey: "m"}, records: []Record{{Key: "z", Val: "2"}}},
+	}
+	wantErr := errors.New("write failed")
+	_, err := writeCompactionOutputsWithWriter(dir, 7, results, nil, func(path string, records []Record) (*SStable, error) {
+		if strings.HasSuffix(path, "00000000000000000008.sst") {
+			return nil, wantErr
+		}
+		return WriteSStable(path, records)
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("writeCompactionOutputsWithWriter() error = %v, want %v", err, wantErr)
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) == ".sst" {
+			t.Fatalf("failed output left behind %q", entry.Name())
+		}
 	}
 }

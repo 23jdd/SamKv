@@ -19,6 +19,13 @@ type compactionTaskResult struct {
 	inputRecords int
 }
 
+type compactionOutput struct {
+	keyRange compactionRange
+	records  []Record
+	table    *SStable
+	path     string
+}
+
 // planCompactionRanges 利用 SSTable 的 DataBlock 首 key 选择近似均匀的分割点。
 // 分割点只来自真实记录，因此不会截断 key，并且所有返回区间互不重叠且覆盖完整 key 空间。
 func planCompactionRanges(tables []*SStable, indexes []int, workers int) []compactionRange {
@@ -140,5 +147,61 @@ func applyGlobalSizeRetention(results []compactionTaskResult, maxSizeBytes int64
 			results[index].keyRange.startKey,
 			results[index].keyRange.endKey,
 		)
+	}
+}
+
+// writeCompactionOutputs 为每个非空范围并行生成一张 SSTable。
+// 只有全部文件都写成功，调用方才可以把这些输出发布到 Manifest。
+func writeCompactionOutputs(
+	dir string,
+	firstFileID uint64,
+	results []compactionTaskResult,
+	cache *BlockCache,
+) ([]compactionOutput, error) {
+	return writeCompactionOutputsWithWriter(dir, firstFileID, results, cache, WriteSStable)
+}
+
+func writeCompactionOutputsWithWriter(
+	dir string,
+	firstFileID uint64,
+	results []compactionTaskResult,
+	cache *BlockCache,
+	write func(string, []Record) (*SStable, error),
+) ([]compactionOutput, error) {
+	outputs := make([]compactionOutput, 0, len(results))
+	for _, result := range results {
+		if len(result.records) == 0 {
+			continue
+		}
+		outputs = append(outputs, compactionOutput{
+			keyRange: result.keyRange,
+			records:  result.records,
+			path:     sstablePath(dir, firstFileID+uint64(len(outputs))),
+		})
+	}
+
+	errs := make([]error, len(outputs))
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(len(outputs))
+	for index := range outputs {
+		go func() {
+			defer waitGroup.Done()
+			outputs[index].table, errs[index] = write(outputs[index].path, outputs[index].records)
+			if errs[index] == nil {
+				outputs[index].table.SetBlockCache(cache)
+			}
+		}()
+	}
+	waitGroup.Wait()
+	if err := errors.Join(errs...); err != nil {
+		cleanupCompactionOutputs(outputs)
+		return nil, err
+	}
+	return outputs, nil
+}
+
+func cleanupCompactionOutputs(outputs []compactionOutput) {
+	for _, output := range outputs {
+		cleanupCompactionOutput(output.table, output.path)
 	}
 }
