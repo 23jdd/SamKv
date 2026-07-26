@@ -183,10 +183,10 @@ func TestQueryFormat_TimeRange(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 
 	tests := []struct {
-		name   string
-		q      QueryFormat
-		start  time.Time
-		end    time.Time
+		name  string
+		q     QueryFormat
+		start time.Time
+		end   time.Time
 	}{
 		{
 			name: "no offset",

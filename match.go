@@ -16,7 +16,7 @@ func Matcher(target []byte, pattern []byte) bool {
 	ti, pi := 0, 0
 	starIdx := -1 // 最近一个 % 的位置
 	matchIdx := 0 // % 当前匹配到的 target 位置
-	
+
 	for ti < tLen {
 		if pi < pLen {
 			switch pr[pi] {
