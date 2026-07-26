@@ -1,5 +1,8 @@
 package parse
 
+// 本文件覆盖中文等 Unicode 标识符、需引号的特殊字符和 Duration 边界。
+// 用例区分“Unicode 字母可裸写”与“emoji 等符号必须进入字符串”的词法规则。
+
 import (
 	"errors"
 	"testing"

@@ -1,5 +1,8 @@
 package parse
 
+// 本文件覆盖标准查询、空标签、引号值、时间窗口和非法语法/语义边界。
+// 错误断言使用 ErrInvalidQueryFormat，避免绑定 Participle 的具体错误文本。
+
 import (
 	"errors"
 	"testing"
