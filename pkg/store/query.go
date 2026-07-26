@@ -1,5 +1,8 @@
 package store
 
+// 本文件实现普通 KV 的有序范围扫描，并合并内存表与各层 SSTable 的最新可见版本。
+// Scan 使用左闭右开区间 [startKey, endKey)，空边界表示不限制。
+
 import (
 	"errors"
 	"sort"

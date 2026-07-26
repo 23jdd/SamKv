@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证默认配置、所有数值边界和不支持的 WAL 同步策略会被拒绝。
+
 import "testing"
 
 func TestDefaultOptionsConfiguresCompactionWorkers(t *testing.T) {

@@ -1,5 +1,8 @@
 package store
 
+// 本文件汇总 Store 的原子计数器、内存状态、磁盘占用、层级分布和 Block Cache 指标。
+// Stats 是并发采样快照，不保证所有字段来自同一个绝对时刻。
+
 import (
 	"os"
 	"path/filepath"
@@ -37,6 +40,7 @@ type Stats struct {
 }
 
 // Stats 返回写入、查询、内存、WAL、SSTable 和后台错误统计。
+// 文件可能在 os.Stat 前后被 Compaction 替换，因此磁盘字节数用于监控趋势，不作为事务性配额判断。
 func (st *StoreManger) Stats() Stats {
 	stats := Stats{
 		WriteOperations:       st.stats.writeOperations.Load(),

@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证结构化日志批量写入、标签子集查询、时间边界、压缩消息和序列恢复。
+
 import (
 	"bytes"
 	"testing"

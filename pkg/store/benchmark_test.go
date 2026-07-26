@@ -1,5 +1,7 @@
 package store
 
+// 本文件提供 Put/Get/WriteLog/Query 等热路径基准；基准结果依赖磁盘与 WAL 同步策略。
+
 import (
 	"fmt"
 	"testing"

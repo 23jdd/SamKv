@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证不同 WALSyncPolicy 的 fsync 时机和关闭前刷盘行为。
+
 import (
 	"errors"
 	"path/filepath"

@@ -1,5 +1,8 @@
 package store
 
+// 本文件定义 Store 配置、默认容量和 WAL 持久性策略。
+// 应从 DefaultOptions 开始按需覆盖；Options 的完整零值不是有效配置。
+
 import (
 	"errors"
 	"time"
@@ -63,6 +66,7 @@ type Options struct {
 }
 
 // DefaultOptions 返回适合本地日志存储的默认配置。
+// WALSyncInterval 吞吐更高，但进程或系统崩溃时可能丢失最后一个同步周期；需要 Put 返回即落盘时改用 WALSyncEveryWrite。
 func DefaultOptions() Options {
 	return Options{
 		MemTableLimit:       DefaultMemTableLimit,

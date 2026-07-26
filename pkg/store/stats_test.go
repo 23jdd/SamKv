@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证操作计数、层级分布、缓存状态和磁盘字节统计。
+
 import "testing"
 
 func TestStatsReportsOperationsAndStorage(t *testing.T) {

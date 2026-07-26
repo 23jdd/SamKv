@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证点查询遇到损坏 SSTable 时不会把读取错误伪装成普通的 key 不存在。
+
 import (
 	"errors"
 	"testing"

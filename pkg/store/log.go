@@ -1,5 +1,8 @@
 package store
 
+// 本文件在普通 KV 之上实现结构化日志写入和查询：时间、标签、序列号进入 key，消息进入压缩 value。
+// Query 只适用于 WriteLog/WriteLogs 产生的记录，标签匹配采用“查询标签是记录标签的子集”语义。
+
 import (
 	"errors"
 	"math"
@@ -33,6 +36,7 @@ func (st *StoreManger) WriteLog(entry LogEntry) (uint64, error) {
 }
 
 // WriteLogs 把多条结构化日志编码成一个 Batch，减少 WAL 提交与锁竞争。
+// 空切片返回 nil；自动序列号在后续编码或写入失败时不会回收，因此允许出现空洞。
 func (st *StoreManger) WriteLogs(entries []LogEntry) ([]uint64, error) {
 	if len(entries) == 0 {
 		return nil, nil
@@ -77,6 +81,7 @@ func (st *StoreManger) WriteLogs(entries []LogEntry) ([]uint64, error) {
 
 // Query 按闭区间 [startTime, endTime] 查询日志，并用 labels 做子集匹配。
 // 返回结果按复合 key 排序，即先按时间，再按标签和序列号排序。
+// 时间范围两端都包含；重复标签名、endTime 早于 startTime 或遇到非结构化记录均返回错误。
 func (st *StoreManger) Query(startTime, endTime time.Time, labels []utils.Label) ([]LogEntry, error) {
 	st.stats.readOperations.Add(1)
 	if endTime.Before(startTime) {

@@ -1,5 +1,8 @@
 package store
 
+// 本文件组合 MemTable、WAL、SSTable、Manifest 和后台任务，提供 Store 的生命周期及普通 KV API。
+// 同一实例可供多个 goroutine 使用；调用 Close 后所有读写和维护操作均不应继续使用。
+
 import (
 	"errors"
 	"fmt"

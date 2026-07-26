@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证半开区间、空边界、版本覆盖、墓碑过滤和无效范围。
+
 import "testing"
 
 func TestStoreScanMergesVersionsAndTombstones(t *testing.T) {
