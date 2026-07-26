@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -152,7 +151,7 @@ func (handler *logHTTPHandler) query(c *gin.Context) {
 	}
 	matcher := []byte(query.Query)
 	for _, entry := range entries {
-		if !bytes.Contains(entry.Message, matcher) {
+		if !Matcher(entry.Message, matcher) {
 			continue
 		}
 		if len(response.Entries) == limit {
