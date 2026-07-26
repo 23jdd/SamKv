@@ -1,5 +1,8 @@
 package utils
 
+// 本文件定义复合日志 Key 的规范化、转义和有序二进制编码。
+// 存储与范围扫描必须使用 EncodeKey；EncodeKeyString 仅供人类阅读和诊断。
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -32,6 +35,7 @@ type Label struct {
 }
 
 // Key 表示解码后的复合 key。
+// Timestamp 使用 Unix 纳秒语义，Sequence 用于区分同一时间和标签组合下的多条日志。
 type Key struct {
 	Timestamp int64
 	Labels    []Label
@@ -44,6 +48,7 @@ type Key struct {
 //	[8 bytes timestamp][sorted label bytes][0x00][8 bytes sequence]
 //
 // timestamp 使用翻转符号位的 big-endian int64，保证 int64 的自然顺序等于字节序。
+// labels 可以为 nil；空名称或名称/值中的 NUL 会返回 ErrInvalidLabel。函数不会修改输入切片。
 func EncodeKey(timestamp int64, labels []Label, sequence uint64) ([]byte, error) {
 	labels = NormalizeLabels(labels)
 	labelBytes, err := encodeLabels(labels)
@@ -65,6 +70,7 @@ func EncodeKey(timestamp int64, labels []Label, sequence uint64) ([]byte, error)
 }
 
 // DecodeKey 将 EncodeKey 生成的二进制 key 还原成结构化字段。
+// data 必须包含完整时间戳、标签终止符和序列号；截断、非法转义或尾部布局错误返回 ErrInvalidKey。
 func DecodeKey(data []byte) (Key, error) {
 	if len(data) < keyTimestampSize+1+keySequenceSize {
 		return Key{}, ErrInvalidKey
@@ -86,6 +92,7 @@ func DecodeKey(data []byte) (Key, error) {
 
 // EncodeKeyString 生成便于调试和日志展示的文本 key。
 // 文本 key 不用于磁盘排序；真正存储和范围查询应使用 EncodeKey。
+// 序列号格式 %05d 只是最小宽度，超过 99999 时会自然增长，因此不能把文本位置当固定偏移。
 func EncodeKeyString(timestamp time.Time, labels []Label, sequence uint64) (string, error) {
 	labels = NormalizeLabels(labels)
 	encoded, err := encodeLabels(labels)
@@ -99,6 +106,7 @@ func EncodeKeyString(timestamp time.Time, labels []Label, sequence uint64) (stri
 }
 
 // NormalizeLabels 返回按 Name、Value 排序后的标签副本。
+// nil 输入返回非共享的空结果；函数不校验标签，也不会去重重复的 Name/Value。
 func NormalizeLabels(labels []Label) []Label {
 	out := make([]Label, len(labels))
 	copy(out, labels)
@@ -112,6 +120,7 @@ func NormalizeLabels(labels []Label) []Label {
 }
 
 // TimePrefix 返回只包含时间戳的 key 前缀，可用于按时间做范围扫描边界。
+// 返回值只有 8 字节，不是完整 Key；常见范围为 [TimePrefix(start), TimePrefix(end))。
 func TimePrefix(timestamp int64) []byte {
 	prefix := make([]byte, keyTimestampSize)
 	binary.BigEndian.PutUint64(prefix, encodeOrderedInt64(timestamp))

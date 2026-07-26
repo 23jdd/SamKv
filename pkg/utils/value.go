@@ -1,5 +1,8 @@
 package utils
 
+// 本文件定义日志 Value 的压缩、二进制序列化和严格解码。
+// Value.Message 是编码后的载荷；业务读取必须通过 DecompressedMessage 获取原文。
+
 import (
 	"bytes"
 	"compress/gzip"
@@ -37,11 +40,13 @@ type Value struct {
 }
 
 // NewValue 创建一个 gzip 压缩的日志 Value。
+// message 可以为空；返回值拥有独立压缩缓冲，调用方之后可以安全复用原切片。
 func NewValue(timestamp int64, message []byte) (Value, error) {
 	return NewValueWithCompression(timestamp, message, CompressionGzip)
 }
 
 // NewValueWithCompression 创建指定压缩格式的日志 Value。
+// 仅支持 CompressionNone 和 CompressionGzip，其他值返回 ErrUnsupportedCompression。
 func NewValueWithCompression(timestamp int64, message []byte, compression byte) (Value, error) {
 	compressed, err := compressMessage(message, compression)
 	if err != nil {
@@ -51,6 +56,7 @@ func NewValueWithCompression(timestamp int64, message []byte, compression byte) 
 }
 
 // DecompressedMessage 返回解压后的原始日志内容。
+// 每次调用都返回新切片；gzip 数据损坏时返回标准库解压错误。
 func (v Value) DecompressedMessage() ([]byte, error) {
 	return decompressMessage(v.Message, v.Compression)
 }
@@ -71,6 +77,7 @@ func (v Value) MarshalBinary() ([]byte, error) {
 }
 
 // UnmarshalValue 解码 MarshalBinary 生成的二进制 value。
+// 输入必须恰好包含一条 Value；尾随字节、截断数据和未知版本都会被拒绝。
 func UnmarshalValue(data []byte) (Value, error) {
 	reader := bytes.NewReader(data)
 	version, err := reader.ReadByte()
