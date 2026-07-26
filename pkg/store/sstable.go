@@ -4,8 +4,6 @@ package store
 // 写入始终产生带 CRC32C 的当前版本；打开时只加载索引和元数据，DataBlock 按需读取。
 
 import (
-	"bytes"
-
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -126,81 +124,6 @@ func NewSStable(rs []Record) (*SStable, error) {
 		return nil, err
 	}
 	return &SStable{rs: records, bf: bf, meta: meta}, nil
-}
-
-// encodeIndexBlock 编码 IndexBlock。
-// IndexBlock 保存每个 DataBlock 的 key 范围和 BlockHandle。
-func encodeIndexBlock(index []IndexEntry) ([]byte, error) {
-	var buf bytes.Buffer
-	if err := writeUint32(&buf, uint32(len(index))); err != nil {
-		return nil, err
-	}
-	for _, entry := range index {
-		firstKey := []byte(entry.FirstKey)
-		lastKey := []byte(entry.LastKey)
-		if err := writeUint32(&buf, uint32(len(firstKey))); err != nil {
-			return nil, err
-		}
-		if err := writeUint32(&buf, uint32(len(lastKey))); err != nil {
-			return nil, err
-		}
-		if err := writeUint64(&buf, entry.Handle.Offset); err != nil {
-			return nil, err
-		}
-		if err := writeUint64(&buf, entry.Handle.Size); err != nil {
-			return nil, err
-		}
-		if _, err := buf.Write(firstKey); err != nil {
-			return nil, err
-		}
-		if _, err := buf.Write(lastKey); err != nil {
-			return nil, err
-		}
-	}
-	return buf.Bytes(), nil
-}
-
-// decodeIndexBlock 解码 IndexBlock。
-func decodeIndexBlock(data []byte) ([]IndexEntry, error) {
-	if len(data) < 4 {
-		return nil, ErrInvalidSSTable
-	}
-	offset := 0
-	count := int(binary.LittleEndian.Uint32(data[offset:]))
-	offset += 4
-	index := make([]IndexEntry, 0, count)
-	for i := 0; i < count; i++ {
-		if len(data)-offset < 24 {
-			return nil, ErrInvalidSSTable
-		}
-		firstKeyLen := int(binary.LittleEndian.Uint32(data[offset:]))
-		offset += 4
-		lastKeyLen := int(binary.LittleEndian.Uint32(data[offset:]))
-		offset += 4
-		handle := BlockHandle{
-			Offset: binary.LittleEndian.Uint64(data[offset:]),
-		}
-		offset += 8
-		handle.Size = binary.LittleEndian.Uint64(data[offset:])
-		offset += 8
-
-		if firstKeyLen < 0 || lastKeyLen < 0 {
-			return nil, ErrInvalidSSTable
-		}
-		if firstKeyLen > len(data)-offset || lastKeyLen > len(data)-offset-firstKeyLen {
-			return nil, ErrInvalidSSTable
-		}
-		firstKey := string(data[offset : offset+firstKeyLen])
-		offset += firstKeyLen
-		lastKey := string(data[offset : offset+lastKeyLen])
-		offset += lastKeyLen
-
-		index = append(index, IndexEntry{FirstKey: firstKey, LastKey: lastKey, Handle: handle})
-	}
-	if offset != len(data) {
-		return nil, ErrInvalidSSTable
-	}
-	return index, nil
 }
 
 // encodeFooter 编码固定大小 Footer。
