@@ -1,5 +1,8 @@
 package main
 
+// 本文件实现 samctl 命令和带超时的 SamKV HTTP 客户端，支持 KV、结构化日志、健康检查与指标。
+// 响应体最多读取 64 MiB；非 2xx 响应转换为可用 errors.As 检查的 APIError。
+
 import (
 	"bytes"
 	"context"
@@ -69,6 +72,8 @@ type LogQueryResult struct {
 	Truncated bool       `json:"truncated"`
 }
 
+// NewClient 创建 HTTP 客户端；address 传主机名或裸 IPv4/IPv6，不要包含协议和端口。
+// port 必须为 1..65535，timeout 必须大于 0；当前客户端固定使用明文 HTTP。
 func NewClient(address string, port int, timeout time.Duration) (*Client, error) {
 	if address == "" {
 		return nil, errors.New("cli: address is required")
@@ -180,6 +185,7 @@ func (c *Client) WriteLogs(ctx context.Context, entries []LogWrite) ([]uint64, e
 	return response.Sequences, nil
 }
 
+// QueryLogs 把完整 QueryFormat 作为 query 参数发送；limit<=0 使用服务端默认值，超过服务端上限会得到 APIError。
 func (c *Client) QueryLogs(ctx context.Context, query string, limit int) (LogQueryResult, error) {
 	if query == "" {
 		return LogQueryResult{}, fmt.Errorf("%w: query is required", ErrArgsNotEnough)

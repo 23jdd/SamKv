@@ -1,5 +1,7 @@
 package main
 
+// 本文件验证 CLI 参数兼容、空值、标签、批量文件、URL 转义、超时、响应上限和 API 错误。
+
 import (
 	"context"
 	"encoding/json"

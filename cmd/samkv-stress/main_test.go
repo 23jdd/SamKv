@@ -1,5 +1,7 @@
 package main
 
+// 本文件验证压力参数边界、目录保护、负载可复现性、速率计算及小规模 KV/日志端到端运行。
+
 import (
 	"bytes"
 	"encoding/json"

@@ -1,5 +1,8 @@
 package main
 
+// 本文件实现离线校验、修复、备份、恢复和格式升级命令，并以缩进 JSON 输出报告。
+// verify/repair/backup/upgrade 会获取数据目录锁，运行中的 SamKV 服务必须先关闭。
+
 import (
 	"encoding/json"
 	"errors"
@@ -18,6 +21,8 @@ func main() {
 	}
 }
 
+// run 执行一个子命令；stdout 只写机器可读 JSON，参数帮助和诊断写入 stderr。
+// repair 会改变 Manifest 并隔离损坏文件，执行前应先保留目录副本或经过 VerifyBackup 的备份。
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printUsage(stderr)

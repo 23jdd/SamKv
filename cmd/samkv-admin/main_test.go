@@ -1,5 +1,7 @@
 package main
 
+// 本文件验证 admin 子命令参数、JSON 报告、备份恢复、损坏修复和目录锁冲突。
+
 import (
 	"bytes"
 	"path/filepath"

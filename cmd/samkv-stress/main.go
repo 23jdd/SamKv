@@ -1,5 +1,8 @@
 package main
 
+// 本文件运行可配置的 KV/日志并发写入、Checkpoint、重启读取和完整性验证压力测试。
+// 结果只适用于报告中的 WAL 同步策略、数据可压缩性、硬件与并发度，不能直接代表生产吞吐。
+
 import (
 	"bytes"
 	"encoding/json"
@@ -60,6 +63,8 @@ func main() {
 	}
 }
 
+// run 要求指定目录为空；未指定 -dir 时使用临时目录并在报告写出后删除。
+// -strict 对每次 WAL 写入 fsync，-verify 把 Checkpoint/重启/逐条读取计入总耗时但不计入纯写入速率。
 func run(args []string, stdout, stderr io.Writer) error {
 	config, err := parseConfig(args, stderr)
 	if err != nil {
