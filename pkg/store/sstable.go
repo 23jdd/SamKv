@@ -231,7 +231,17 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 	if err := file.Close(); err != nil {
 		return nil, err
 	}
+	if _, err := os.Stat(path); err == nil {
+		return nil, os.ErrExist
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
+		return nil, err
+	}
+	if err := syncStoreDirectory(filepath.Dir(path)); err != nil {
+		_ = os.Remove(path)
+		_ = syncStoreDirectory(filepath.Dir(path))
 		return nil, err
 	}
 	ok = true

@@ -481,6 +481,9 @@ func (st *StoreManger) clearBackgroundError() {
 }
 
 func (st *StoreManger) loadSSTables() error {
+	if err := cleanupSSTableTemps(st.dir); err != nil {
+		return err
+	}
 	manifest, ok, err := loadManifest(st.dir)
 	if err != nil {
 		return err
@@ -525,7 +528,10 @@ func (st *StoreManger) loadSSTablesFromManifest(manifest Manifest) error {
 	st.manifest = manifest
 	st.nextSSTableID = manifest.NextFileID
 
-	var maxID uint64
+	maxID, err := maxSSTableIDOnDisk(st.dir)
+	if err != nil {
+		return err
+	}
 	for _, entry := range manifest.SSTables {
 		path := filepath.Join(st.dir, entry.File)
 		table, err := OpenSStable(path)
@@ -562,6 +568,48 @@ func manifestFromSSTables(nextFileID uint64, paths []string, tables []*SStable) 
 	return manifest
 }
 
+// cleanupSSTableTemps 删除写 SSTable 时在原子重命名前遗留的临时文件。
+// 只有以 .sst.tmp 结尾的普通文件会被删除，已经发布的 .sst 和其他文件不受影响。
+func cleanupSSTableTemps(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	removed := false
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sst.tmp") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		removed = true
+	}
+	if removed {
+		return syncStoreDirectory(dir)
+	}
+	return nil
+}
+
+// maxSSTableIDOnDisk 返回目录中所有合法数字文件名 SSTable 的最大编号。
+// Manifest 未引用的孤立表不会参与读取，但编号仍需保留，避免后续发布覆盖待修复文件。
+func maxSSTableIDOnDisk(dir string) (uint64, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	var maxID uint64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		id, ok := sstableID(entry.Name())
+		if ok && id > maxID {
+			maxID = id
+		}
+	}
+	return maxID, nil
+}
 func (st *StoreManger) nextSSTablePathLocked() string {
 	return sstablePath(st.dir, st.nextSSTableID)
 }
