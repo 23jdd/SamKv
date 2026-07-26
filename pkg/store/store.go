@@ -83,6 +83,8 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 	}
 	walOptions := wal.DefaultOptions()
 	walOptions.SyncPolicy = options.WALSyncPolicy
+	walOptions.SegmentSize = options.WALSegmentSize
+	walOptions.SegmentMaxRecords = options.WALSegmentMaxRecords
 	if options.WALSyncInterval > 0 {
 		walOptions.SyncInterval = options.WALSyncInterval
 	}

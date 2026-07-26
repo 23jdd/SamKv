@@ -3,10 +3,12 @@ package store
 // 本文件验证默认配置、所有数值边界和不支持的 WAL 同步策略会被拒绝。
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/23jdd/SamKv/pkg/utils"
+	"github.com/23jdd/SamKv/pkg/wal"
 )
 
 func TestDefaultOptionsConfiguresCompactionWorkers(t *testing.T) {
@@ -99,5 +101,43 @@ func TestCompactionRateLimitOptions(t *testing.T) {
 	options.CompactionRateLimitBytesPerSec = -1
 	if err := validateOptions(options); err != ErrInvalidOptions {
 		t.Fatalf("negative rate limit error = %v, want %v", err, ErrInvalidOptions)
+	}
+}
+
+func TestWALSegmentOptions(t *testing.T) {
+	options := DefaultOptions()
+	if options.WALSegmentSize != wal.DefaultSegmentSize || options.WALSegmentMaxRecords != 0 {
+		t.Fatalf("default WAL segment options = %d bytes, %d records", options.WALSegmentSize, options.WALSegmentMaxRecords)
+	}
+	options.WALSegmentSize = 0
+	if err := validateOptions(options); err != ErrInvalidOptions {
+		t.Fatalf("zero WALSegmentSize error = %v, want %v", err, ErrInvalidOptions)
+	}
+}
+
+func TestStorePassesWALSegmentOptions(t *testing.T) {
+	options := DefaultOptions()
+	options.AutoCheckpoint = false
+	options.WALSegmentSize = 128
+	options.WALSegmentMaxRecords = 2
+	database, err := NewStoreManagerWithOptions(t.TempDir(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for index := 0; index < 3; index++ {
+		if err := database.Put(fmt.Sprintf("key-%d", index), "value"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.wm.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	segments, err := wal.ListSegments(database.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(segments) < 2 {
+		t.Fatalf("WAL segments = %+v, want rotation by record count", segments)
 	}
 }

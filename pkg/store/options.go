@@ -69,6 +69,10 @@ type Options struct {
 	WALSyncPolicy WALSyncPolicy
 	// WALSyncInterval 是周期同步模式的刷盘间隔；0 使用 WAL 默认值。
 	WALSyncInterval time.Duration
+	// WALSegmentSize 是 WAL segment 的近似字节轮转阈值，记录不会跨 segment 拆分。
+	WALSegmentSize int64
+	// WALSegmentMaxRecords 是每段最多物理记录数，0 表示只按 WALSegmentSize 轮转。
+	WALSegmentMaxRecords uint64
 }
 
 // DefaultOptions 返回适合本地日志存储的默认配置。
@@ -88,6 +92,7 @@ func DefaultOptions() Options {
 		CompressionType:                utils.CompressionSnappy,
 		WALSyncPolicy:                  WALSyncInterval,
 		WALSyncInterval:                wal.FlushInterval,
+		WALSegmentSize:                 wal.DefaultSegmentSize,
 	}
 }
 
@@ -103,7 +108,8 @@ func validateOptions(options Options) error {
 		options.Retention < 0 ||
 		options.MaxSizeBytes < 0 ||
 		options.BlockCacheBytes < 0 ||
-		options.WALSyncInterval < 0 {
+		options.WALSyncInterval < 0 ||
+		options.WALSegmentSize <= 0 {
 		return ErrInvalidOptions
 	}
 	if !options.CompressionType.Valid() {
