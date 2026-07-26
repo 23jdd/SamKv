@@ -120,3 +120,9 @@ func runStressReport(t *testing.T, args ...string) stressReport {
 	}
 	return report
 }
+
+func TestElapsedSinceKeepsFastPhasesMeasurable(t *testing.T) {
+	if got := elapsedSince(time.Now().Add(time.Second)); got != time.Nanosecond {
+		t.Fatalf("elapsedSince(future) = %v, want 1ns", got)
+	}
+}

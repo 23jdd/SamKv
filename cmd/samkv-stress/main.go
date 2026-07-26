@@ -92,13 +92,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	writeStarted := time.Now()
 	phaseErr := runWrites(database, config, baseTimestamp)
-	writeDuration := time.Since(writeStarted)
+	writeDuration := elapsedSince(writeStarted)
 
 	var checkpointDuration time.Duration
 	if phaseErr == nil {
 		checkpointStarted := time.Now()
 		_, phaseErr = database.Checkpoint()
-		checkpointDuration = time.Since(checkpointStarted)
+		checkpointDuration = elapsedSince(checkpointStarted)
 	}
 
 	stats := database.Stats()
@@ -112,14 +112,14 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if config.verify {
 		reopenStarted := time.Now()
 		database, err = store.NewStoreManagerWithOptions(dir, options)
-		reopenDuration = time.Since(reopenStarted)
+		reopenDuration = elapsedSince(reopenStarted)
 		if err != nil {
 			return err
 		}
 
 		verifyStarted := time.Now()
 		verifyErr := verifyWrites(database, config, baseTimestamp)
-		verifyDuration = time.Since(verifyStarted)
+		verifyDuration = elapsedSince(verifyStarted)
 		verified = verifyErr == nil
 		stats = database.Stats()
 		closeErr = database.Close()
@@ -128,7 +128,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	duration := time.Since(started)
+	duration := elapsedSince(started)
+	phaseDuration := writeDuration + checkpointDuration + reopenDuration + verifyDuration
+	if duration < phaseDuration {
+		duration = phaseDuration
+	}
 	payloadBytes := int64(config.count) * int64(config.valueBytes)
 	report := stressReport{
 		Directory:             dir,
@@ -164,6 +168,15 @@ func syncPolicyName(strict bool) string {
 	return "interval"
 }
 
+// elapsedSince 保证已执行阶段至少报告 1ns。
+// 某些 Windows 计时源在极短阶段可能返回 0；保留正值可避免速率字段被误报为零。
+func elapsedSince(started time.Time) time.Duration {
+	elapsed := time.Since(started)
+	if elapsed <= 0 {
+		return time.Nanosecond
+	}
+	return elapsed
+}
 func operationsPerSecond(count int, duration time.Duration) float64 {
 	if duration <= 0 {
 		return 0
