@@ -1,5 +1,7 @@
 package main
 
+// 本文件验证 QueryFormat 时间标签解析、内容 matcher、limit 截断和查询错误响应。
+
 import (
 	"encoding/json"
 	"fmt"

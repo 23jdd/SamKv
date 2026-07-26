@@ -1,5 +1,7 @@
 package main
 
+// 本文件验证支持 GetWithError 的 Store 会把磁盘读取失败映射为 500 而不是 404。
+
 import (
 	"errors"
 	"net/http"

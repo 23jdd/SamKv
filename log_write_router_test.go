@@ -1,5 +1,7 @@
 package main
 
+// 本文件验证单条/批量日志写入、默认时间、标签排序、数量限制和请求校验。
+
 import (
 	"encoding/json"
 	"net/http"

@@ -1,5 +1,8 @@
 package main
 
+// 本文件把 Store Stats 渲染为 Prometheus 文本格式并注册 /metrics。
+// 路由本身不提供认证或访问控制，暴露到不可信网络前应由反向代理保护。
+
 import (
 	"fmt"
 	"net/http"
@@ -23,6 +26,7 @@ func registerMetricsRoute(router *gin.Engine, database MetricsStore) {
 	})
 }
 
+// formatPrometheusMetrics 每次根据一个 Stats 快照生成完整响应，不缓存历史样本。
 func formatPrometheusMetrics(stats store.Stats) string {
 	var output strings.Builder
 	writeMetric := func(name, help, metricType string, value any) {

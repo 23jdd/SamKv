@@ -1,5 +1,7 @@
 package main
 
+// 本文件验证 Prometheus 指标名称、类型、层级标签、缓存计数和后台错误值。
+
 import (
 	"net/http"
 	"strings"

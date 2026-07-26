@@ -1,5 +1,8 @@
 package main
 
+// 本文件定义 Gin KV 路由、严格 JSON 解码、请求大小限制和 Store 错误到 HTTP 状态码的映射。
+// key 来自 /kv/*key，因此可以包含斜杠；空 key 返回 400，底层读取错误不会伪装为 404。
+
 import (
 	"encoding/json"
 	"errors"
@@ -48,6 +51,7 @@ type errorResponse struct {
 }
 
 // NewRouter 创建暴露 KV 读写、删除和健康检查接口的 Gin 路由。
+// database 不能为 nil；请求体和单条 WAL 记录限制为 64 MiB，JSON 不允许未知字段或多个顶层对象。
 func NewRouter(database KVStore) *gin.Engine {
 	if database == nil {
 		panic("router: nil store")

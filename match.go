@@ -1,8 +1,12 @@
 package main
 
+// 本文件实现面向 UTF-8 文本的简化 LIKE matcher。
+// 匹配按 Unicode 码点进行，不支持转义、范围表达式或嵌套字符类。
+
 // Matcher 判断 target 是否匹配 pattern
 // 支持中文、emoji 等任意 Unicode 字符
 // pattern 支持三种通配符：
+// 不完整的 [ 字符类视为不匹配；无法把通配符当作普通字符使用。
 //
 //	%    匹配任意长度字符串（包括空串）
 //	_    匹配恰好一个任意字符

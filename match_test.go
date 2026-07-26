@@ -1,5 +1,7 @@
 package main
 
+// 本文件覆盖 Unicode、%、_、字符类、空字符串和不完整字符类等 matcher 边界。
+
 import "testing"
 
 func TestMatcher(t *testing.T) {

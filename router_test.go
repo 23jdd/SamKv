@@ -1,5 +1,7 @@
 package main
 
+// 本文件验证 KV 成功路径、严格 JSON、大小限制、缺失 key、方法错误和健康检查。
+
 import (
 	"bytes"
 	"encoding/json"

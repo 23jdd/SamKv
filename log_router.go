@@ -1,5 +1,8 @@
 package main
 
+// 本文件暴露结构化日志单条/批量写入和 QueryFormat 查询接口。
+// query 字段是 matcher 字符串，支持 %、_、[abc]；服务会在两侧补 % 以实现内容包含匹配。
+
 import (
 	"encoding/json"
 	"errors"
@@ -116,6 +119,7 @@ func (handler *logHTTPHandler) writeBatch(c *gin.Context) {
 	c.JSON(http.StatusCreated, logBatchWriteResponse{Sequences: sequences})
 }
 
+// query 解析时间和标签后再做消息 matcher 过滤；limit 只计算匹配结果，范围为 1..10000。
 func (handler *logHTTPHandler) query(c *gin.Context) {
 	rawQuery := c.Query("query")
 	if rawQuery == "" {
