@@ -138,10 +138,8 @@ func writeSStable(path string, rs []Record, limiter byteRateLimiter) (*SStable, 
 	}, nil
 }
 
-// OpenSStable 打开磁盘上的 SSTable 文件。
-// 它只加载 Footer、MetaBlock 和 IndexBlock，DataBlock 会在查询时按需读取。
-// 文件过短、Magic/版本非法、Block 越界或 Meta/Index 校验失败会返回错误且自动关闭句柄。
-// 成功后调用方拥有返回对象，必须调用 Close。
+// normalizeRecords 对记录按 key 稳定排序并合并重复 key。
+// 同一 key 保留输入中最后一条记录，从而维持后写覆盖前写语义。
 func normalizeRecords(rs []Record) []Record {
 	records := make([]Record, len(rs))
 	copy(records, rs)
