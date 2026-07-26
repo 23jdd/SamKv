@@ -12,14 +12,15 @@ import (
 )
 
 const (
-	DefaultMemTableLimit       = 4 * 1024 * 1024
-	DefaultCompactionThreshold = 4
-	DefaultCompactionWorkers   = 4
-	DefaultCompactionTaskBytes = 8 * 1024 * 1024
-	DefaultBlockCacheBytes     = 64 * 1024 * 1024
-	DefaultMaxLevels           = 4
-	DefaultLevelBaseSizeBytes  = 64 * 1024 * 1024
-	DefaultLevelSizeMultiplier = 10
+	DefaultMemTableLimit                        = 4 * 1024 * 1024
+	DefaultCompactionThreshold                  = 4
+	DefaultCompactionWorkers                    = 4
+	DefaultCompactionTaskBytes                  = 8 * 1024 * 1024
+	DefaultCompactionRateLimitBytesPerSec int64 = 64 * 1024 * 1024
+	DefaultBlockCacheBytes                      = 64 * 1024 * 1024
+	DefaultMaxLevels                            = 4
+	DefaultLevelBaseSizeBytes                   = 64 * 1024 * 1024
+	DefaultLevelSizeMultiplier                  = 10
 )
 
 // WALSyncPolicy 是 Store 对 WAL 持久性策略的公开别名。
@@ -48,6 +49,8 @@ type Options struct {
 	CompactionWorkers int
 	// CompactionTaskBytes 是每增加一个并行子任务所需的近似输入字节数。
 	CompactionTaskBytes int64
+	// CompactionRateLimitBytesPerSec 是所有 Compaction 输出共享的字节速率上限，0 表示不限制。
+	CompactionRateLimitBytesPerSec int64
 	// MaxLevels 是 LSM 层数，至少为 2；L0 用于刷盘文件。
 	MaxLevels int
 	// LevelBaseSizeBytes 是 L1 触发下推到 L2 的近似字节阈值。
@@ -72,18 +75,19 @@ type Options struct {
 // WALSyncInterval 吞吐更高，但进程或系统崩溃时可能丢失最后一个同步周期；需要 Put 返回即落盘时改用 WALSyncEveryWrite。
 func DefaultOptions() Options {
 	return Options{
-		MemTableLimit:       DefaultMemTableLimit,
-		AutoCheckpoint:      true,
-		CompactionThreshold: DefaultCompactionThreshold,
-		CompactionWorkers:   DefaultCompactionWorkers,
-		CompactionTaskBytes: DefaultCompactionTaskBytes,
-		MaxLevels:           DefaultMaxLevels,
-		LevelBaseSizeBytes:  DefaultLevelBaseSizeBytes,
-		LevelSizeMultiplier: DefaultLevelSizeMultiplier,
-		BlockCacheBytes:     DefaultBlockCacheBytes,
-		CompressionType:     utils.CompressionSnappy,
-		WALSyncPolicy:       WALSyncInterval,
-		WALSyncInterval:     wal.FlushInterval,
+		MemTableLimit:                  DefaultMemTableLimit,
+		AutoCheckpoint:                 true,
+		CompactionThreshold:            DefaultCompactionThreshold,
+		CompactionWorkers:              DefaultCompactionWorkers,
+		CompactionTaskBytes:            DefaultCompactionTaskBytes,
+		CompactionRateLimitBytesPerSec: DefaultCompactionRateLimitBytesPerSec,
+		MaxLevels:                      DefaultMaxLevels,
+		LevelBaseSizeBytes:             DefaultLevelBaseSizeBytes,
+		LevelSizeMultiplier:            DefaultLevelSizeMultiplier,
+		BlockCacheBytes:                DefaultBlockCacheBytes,
+		CompressionType:                utils.CompressionSnappy,
+		WALSyncPolicy:                  WALSyncInterval,
+		WALSyncInterval:                wal.FlushInterval,
 	}
 }
 
@@ -92,6 +96,7 @@ func validateOptions(options Options) error {
 		options.CompactionThreshold < 0 ||
 		options.CompactionWorkers <= 0 ||
 		options.CompactionTaskBytes <= 0 ||
+		options.CompactionRateLimitBytesPerSec < 0 ||
 		options.MaxLevels < 2 ||
 		options.LevelBaseSizeBytes <= 0 ||
 		options.LevelSizeMultiplier < 2 ||

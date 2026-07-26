@@ -86,3 +86,18 @@ func TestWriteLogUsesConfiguredCompression(t *testing.T) {
 		t.Fatalf("stored compression = %v, want lz4", value.Compression)
 	}
 }
+
+func TestCompactionRateLimitOptions(t *testing.T) {
+	options := DefaultOptions()
+	if options.CompactionRateLimitBytesPerSec != DefaultCompactionRateLimitBytesPerSec {
+		t.Fatalf("CompactionRateLimitBytesPerSec = %d, want %d", options.CompactionRateLimitBytesPerSec, DefaultCompactionRateLimitBytesPerSec)
+	}
+	options.CompactionRateLimitBytesPerSec = 0
+	if err := validateOptions(options); err != nil {
+		t.Fatalf("zero rate limit should disable throttling: %v", err)
+	}
+	options.CompactionRateLimitBytesPerSec = -1
+	if err := validateOptions(options); err != ErrInvalidOptions {
+		t.Fatalf("negative rate limit error = %v, want %v", err, ErrInvalidOptions)
+	}
+}
