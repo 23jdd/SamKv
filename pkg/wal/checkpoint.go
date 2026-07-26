@@ -1,5 +1,8 @@
 package wal
 
+// 本文件实现显式 Flush、Checkpoint 后的 WAL 重写以及幂等关闭。
+// Replace/Reset 与追加共享 writeMu，因此不会发布只写了一半的新日志文件。
+
 import (
 	"errors"
 	"os"
@@ -8,6 +11,7 @@ import (
 
 // Flush 将当前 WAL 内存 buffer 同步刷到 wal.log。
 // Checkpoint 前必须先 Flush，避免仍在内存中的 WAL 记录丢失。
+// 空缓冲返回 nil；此前记录已经在对应写入路径完成 Sync。
 func (wm *WalManger) Flush() error {
 	wm.writeMu.Lock()
 	defer wm.writeMu.Unlock()
@@ -16,6 +20,7 @@ func (wm *WalManger) Flush() error {
 
 // Reset 清空当前 wal.log，并重新打开一个可继续追加的新文件。
 // Windows 的追加句柄不能直接 Truncate，因此必须在 writeMu 保护下关闭后重建。
+// 只有上层确认全部 WAL 状态已进入 SSTable 后才能调用，否则会永久丢失恢复信息。
 func (wm *WalManger) Reset() error {
 	wm.writeMu.Lock()
 	defer wm.writeMu.Unlock()
@@ -38,6 +43,7 @@ func (wm *WalManger) Reset() error {
 
 // Replace 用 data 原子替换 wal.log 的持久化内容。
 // Store 在刷出 Immutable MemTable 后用它保留仍在内存中的记录，避免 WAL 无限增长。
+// data 必须是零条或多条完整编码记录；函数不验证内容，传入任意字节会使之后恢复失败。
 func (wm *WalManger) Replace(data []byte) error {
 	wm.writeMu.Lock()
 	defer wm.writeMu.Unlock()
@@ -120,6 +126,7 @@ func writeFileData(file *os.File, data []byte) error {
 }
 
 // Close 停止后台刷盘协程，刷出剩余 buffer，并关闭 wal.log。
+// Close 可重复调用并返回第一次关闭结果；开始关闭后新的追加返回 os.ErrClosed。
 func (wm *WalManger) Close() error {
 	var closeErr error
 	wm.closeOnce.Do(func() {

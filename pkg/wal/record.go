@@ -1,5 +1,8 @@
 package wal
 
+// 本文件定义 WAL 记录的 CRC32 帧格式以及流式读取。
+// Decode 会复制 Key/Value，返回记录不再引用调用方或缓冲池中的底层字节。
+
 import (
 	"encoding/binary"
 	"errors"
@@ -9,10 +12,13 @@ import (
 	bufferpool "github.com/23jdd/SamKv/pkg/pool"
 )
 
+// RecordType 区分写入和删除记录；零值及未知值都不是有效磁盘类型。
 type RecordType uint8
 
 const (
+	// RecordPut 表示为 Key 写入 Value。
 	RecordPut RecordType = iota + 1
+	// RecordDelete 表示删除 Key；该类型的 Value 必须为空。
 	RecordDelete
 )
 
@@ -23,8 +29,11 @@ const (
 )
 
 var (
-	ErrInvalidRecord  = errors.New("invalid wal record")
-	ErrChecksum       = errors.New("wal checksum mismatch")
+	// ErrInvalidRecord 表示记录类型、长度或字段组合不符合 WAL 格式。
+	ErrInvalidRecord = errors.New("invalid wal record")
+	// ErrChecksum 表示 payload 长度完整但 CRC32 校验失败。
+	ErrChecksum = errors.New("wal checksum mismatch")
+	// ErrRecordTooLarge 表示流中声明的 payload 超过 64 MiB 安全上限。
 	ErrRecordTooLarge = errors.New("wal record too large")
 )
 
@@ -37,20 +46,35 @@ var walRecordBufferPool = bufferpool.NewTieredPool(
 	1024*1024,
 )
 
+// Record 是一条可校验的 WAL 操作。
+// PutRecord/DeleteRecord 不复制传入切片，调用方在 Encode 或 AppendRecord 返回前不得修改它们。
 type Record struct {
-	Type     RecordType
+	// Type 是写入或删除操作。
+	Type RecordType
+	// Sequence 由上层 Store 分配，用于恢复版本顺序；零值合法。
 	Sequence uint64
-	Key      []byte
-	Value    []byte
+	// Key 必须非空。
+	Key []byte
+	// Value 在 RecordPut 中可以为空，在 RecordDelete 中必须为空。
+	Value []byte
 }
 
+// PutRecord 构造写入记录；空 key 会在 Encode 时被拒绝，空 value 合法。
 func PutRecord(key []byte, val []byte) *Record {
 	return &Record{Type: RecordPut, Key: key, Value: val}
 }
+
+// DeleteRecord 构造墓碑记录；空 key 会在 Encode 时被拒绝。
 func DeleteRecord(key []byte) *Record {
 	return &Record{Type: RecordDelete, Key: key}
 }
+
+// Encode 生成“CRC32、payload 长度、payload”的完整记录帧。
+// nil Record、空 key、未知类型或带 value 的删除记录返回 ErrInvalidRecord。
 func (r *Record) Encode() ([]byte, error) {
+	if r == nil {
+		return nil, ErrInvalidRecord
+	}
 	if len(r.Key) == 0 {
 		return nil, errors.New("empty key")
 	}
@@ -106,6 +130,8 @@ func (r *Record) Encode() ([]byte, error) {
 	return result, nil
 }
 
+// Decode 校验并解码一条完整记录。
+// data 可以包含帧后的额外字节，但只解码头部声明的第一条记录；流式多记录应使用 ReadRecord。
 func Decode(data []byte) (*Record, error) {
 	if len(data) < headerSize {
 		return nil, ErrInvalidRecord
@@ -193,6 +219,7 @@ func Decode(data []byte) (*Record, error) {
 }
 
 // ReadRecord 从流中读取并校验一条完整 WAL 记录。
+// 干净 EOF 原样返回 io.EOF；截断帧返回 io.ErrUnexpectedEOF；payload 超过 64 MiB 返回 ErrRecordTooLarge。
 func ReadRecord(r io.Reader) (*Record, error) {
 	var header [headerSize]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {

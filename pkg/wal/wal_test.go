@@ -1,5 +1,8 @@
 package wal
 
+// 本文件覆盖超缓冲记录直写、原子 Replace 和池化读取后的数据所有权。
+// 大记录测试带超时，确保容量不足不会让 AppendRecord 永久等待。
+
 import (
 	"bytes"
 	"os"

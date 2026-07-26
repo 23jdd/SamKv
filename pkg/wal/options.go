@@ -1,5 +1,8 @@
 package wal
 
+// 本文件定义 WAL 缓冲与 fsync 策略配置。
+// 使用 DefaultOptions 起步，只覆盖需要调整的字段，避免遗漏有效的同步间隔。
+
 import (
 	"errors"
 	"time"
@@ -16,12 +19,16 @@ const (
 	SyncEveryWrite
 )
 
+// ErrInvalidOptions 表示缓冲大小、同步策略或同步间隔组合无效。
 var ErrInvalidOptions = errors.New("wal: invalid options")
 
 // Options 控制 WAL 的缓冲容量和持久性策略。
 type Options struct {
-	BufferSize   int
-	SyncPolicy   SyncPolicy
+	// BufferSize 是周期模式的内存缓冲容量，必须大于 0；它不是单条记录大小上限。
+	BufferSize int
+	// SyncPolicy 决定 AppendLog/AppendRecord 返回前是否完成 fsync。
+	SyncPolicy SyncPolicy
+	// SyncInterval 仅供 SyncInterval 策略使用，必须大于 0；严格模式会忽略它。
 	SyncInterval time.Duration
 }
 

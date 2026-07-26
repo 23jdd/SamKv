@@ -1,5 +1,8 @@
 package wal
 
+// 本文件固定默认 64 KiB 缓冲、非法配置拒绝和两种 fsync 策略的可观察语义。
+// 满缓冲用例还防止写线程退化为等待周期 ticker 的历史死锁问题。
+
 import (
 	"errors"
 	"os"
