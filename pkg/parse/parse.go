@@ -18,7 +18,8 @@ var (
 		{Name: "Whitespace", Pattern: `\s+`},
 		{Name: "String", Pattern: `"(?:\\.|[^"\\])*"`},
 		{Name: "Duration", Pattern: `(?:[0-9]+(?:\.[0-9]+)?(?:ns|us|µs|μs|ms|s|m|h))+`},
-		{Name: "Ident", Pattern: `[A-Za-z_][A-Za-z0-9_.:/-]*`},
+		// 关键修改：支持 Unicode 字母/数字（中文、emoji 等）
+		{Name: "Ident", Pattern: `[\p{L}_][\p{L}\p{N}_.:/-]*`},
 		{Name: "Number", Pattern: `[0-9]+(?:\.[0-9]+)?`},
 		{Name: "Punct", Pattern: `[{}\[\],=]`},
 	})
