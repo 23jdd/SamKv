@@ -1,5 +1,8 @@
 package skiplist
 
+// 本文件实现跳表节点、随机层高以及点查、范围遍历和删除操作。
+// 用法从 New/NewWithConfig 开始；任何公开方法都可以被多个 goroutine 并发调用。
+
 import (
 	"math/rand"
 	"sync"
@@ -20,6 +23,8 @@ const (
 //	> 0：a > b
 type CompareFunc[K any] func(a, b K) int
 
+// Node 是跳表中的只读节点视图。
+// Key、Value 可读取，但调用方不能访问或修改内部 forward 链；nil 节点的 Height 为 0。
 type Node[K any, V any] struct {
 	Key   K
 	Value V
@@ -36,11 +41,15 @@ func (n *Node[K, V]) Height() int {
 	return len(n.forward)
 }
 
+// Entry 是 Entries 和 Range 快照中的键值对。
+// 如果 K/V 包含指针，快照只复制指针值，不会深拷贝其指向的数据。
 type Entry[K any, V any] struct {
 	Key   K
 	Value V
 }
 
+// SkipList 是由调用方比较器定义顺序的并发安全有序映射。
+// 结构体零值不可直接使用，必须通过 New 或 NewWithConfig 创建。
 type SkipList[K any, V any] struct {
 	mu sync.RWMutex
 
@@ -70,6 +79,8 @@ func New[K any, V any](compare CompareFunc[K]) *SkipList[K, V] {
 }
 
 // NewWithConfig 创建一个可以自定义最大层数和晋升概率的 SkipList。
+// compare=nil、maxLevel<=0 或 probability 不在 (0,1) 时会 panic。
+// 比较器在表的整个生命周期内必须保持一致，否则查找和排序结果未定义。
 func NewWithConfig[K any, V any](
 	compare CompareFunc[K],
 	maxLevel int,
@@ -219,6 +230,7 @@ func (s *SkipList[K, V]) insert(
 }
 
 // Get 根据 Key 查询 Value。
+// 未找到时返回 V 的零值和 false；返回的 Value 若含可变引用，不受跳表锁继续保护。
 func (s *SkipList[K, V]) Get(key K) (V, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -334,6 +346,7 @@ func (s *SkipList[K, V]) Delete(key K) (V, bool) {
 }
 
 // LowerBound 查找第一个 Key >= target 的元素。
+// target 大于所有键或表为空时返回 K/V 零值和 false。
 //
 // 这里的 >= 由 compare 函数定义。
 func (s *SkipList[K, V]) LowerBound(
@@ -447,6 +460,7 @@ func (s *SkipList[K, V]) Range(
 }
 
 // Entries 返回所有元素的有序快照。
+// 空表返回长度为 0 的切片；后续修改跳表不会改变快照中的键值槽位。
 func (s *SkipList[K, V]) Entries() []Entry[K, V] {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

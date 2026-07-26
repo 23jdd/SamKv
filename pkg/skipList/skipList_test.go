@@ -1,5 +1,8 @@
 package skiplist
 
+// 本文件覆盖排序、重复键、空表、Range 回调重入和并发读写边界。
+// 并发用例应配合 go test -race 运行，以验证内部锁而非调用时序保证安全。
+
 import (
 	"sync"
 	"testing"
