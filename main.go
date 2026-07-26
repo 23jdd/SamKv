@@ -25,6 +25,7 @@ const (
 
 type serverConfig struct {
 	envFile string
+	isdaemon bool
 }
 
 func main() {
@@ -37,6 +38,9 @@ func run(args []string) (returnErr error) {
 	config, err := parseServerConfig(args)
 	if err != nil {
 		return err
+	}
+	if config.isdaemon{
+		  
 	}
 	options := LoadEnvFile(config.envFile)
 	dir := os.Getenv("dir")
@@ -83,9 +87,10 @@ func run(args []string) (returnErr error) {
 }
 
 func parseServerConfig(args []string) (serverConfig, error) {
-	config := serverConfig{envFile: ".env"}
+	config := serverConfig{envFile: ".env",isdaemon: false}
 	flags := flag.NewFlagSet("samkv", flag.ContinueOnError)
 	flags.StringVar(&config.envFile, "f", config.envFile, ".env file path")
+	flags.BoolVar(&config.isdaemon,"d",config.isdaemon,"judge daemon process")
 	if err := flags.Parse(args); err != nil {
 		return serverConfig{}, err
 	}
