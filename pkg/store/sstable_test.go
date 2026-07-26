@@ -1,5 +1,8 @@
 package store
 
+// 本文件覆盖 DataBlock 前缀压缩、无序输入规范化、多 Block 索引和墓碑点查。
+// 测试同时固定当前写入格式的排序、去重和 Bloom Filter 无假阴性约束。
+
 import (
 	"path/filepath"
 	"strings"

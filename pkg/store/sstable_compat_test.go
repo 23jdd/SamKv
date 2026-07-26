@@ -1,5 +1,8 @@
 package store
 
+// 本文件构造无 CRC trailer 的 v1 文件，验证兼容读取和未来版本拒绝策略。
+// 辅助写入器只用于测试，生产写入始终使用当前 v2 格式。
+
 import (
 	"errors"
 	"os"

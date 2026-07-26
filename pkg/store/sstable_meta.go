@@ -1,5 +1,8 @@
 package store
 
+// 本文件从结构化复合 Key 构建时间范围、标签 Bloom Filter 和标签基数元数据。
+// 普通 KV key 解码失败时仍可进入 SSTable，只是不参与时间与标签索引统计。
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -69,6 +72,7 @@ func buildSSTableMeta(records []Record, keyFilter *BloomFilter) (MetaBlock, erro
 }
 
 // MayContainLabels 用标签 BloomFilter 快速排除一定不包含查询标签的 SSTable。
+// false 表示一定不包含；true 仍需逐条核对。nil 表、空标签或旧格式无标签索引时保守返回 true。
 func (s *SStable) MayContainLabels(labels []utils.Label) bool {
 	if s == nil || len(labels) == 0 || s.meta.LabelFilter == nil {
 		return true
@@ -82,6 +86,8 @@ func (s *SStable) MayContainLabels(labels []utils.Label) bool {
 }
 
 // OverlapsTimeRange 使用 MetaBlock 的时间范围排除无关 SSTable。
+// 两端按包含关系判断；nil 表、普通 KV 表或旧格式无时间元数据时保守返回 true。
+// 调用方应先保证 startTimestamp<=endTimestamp。
 func (s *SStable) OverlapsTimeRange(startTimestamp, endTimestamp int64) bool {
 	if s == nil || !s.meta.HasTimeRange {
 		return true

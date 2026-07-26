@@ -1,5 +1,8 @@
 package store
 
+// 本文件实现 SSTable v1/v2 的 DataBlock、MetaBlock、IndexBlock、Footer 编解码和点查。
+// 写入始终产生带 CRC32C 的当前版本；打开时只加载索引和元数据，DataBlock 按需读取。
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -24,9 +27,11 @@ import (
 // 打开文件时先读 Footer，再根据 Footer 定位索引和元数据。
 const (
 	// Magic 用于识别当前文件是否是 SamKV 的 SSTable 文件。
+	// 当前 UTF-8 编码恰好占 6 字节；修改它会改变 Footer 大小，必须配合新格式版本。
 	Magic = "流萤"
 
 	// ReStartInterval 表示 DataBlock 前缀压缩时，每隔多少条记录写一个完整 key。
+	// 它属于磁盘格式的一部分，调整后仍可顺序解码，但会改变新文件的压缩率和重启点布局。
 	ReStartInterval = 16
 
 	legacySSTableVersion  uint32 = 1
@@ -59,6 +64,7 @@ var sstableBlockBufferPool = bufferpool.NewTieredPool(
 
 // Record 是 SSTable 中最小的 key/value 记录。
 // Deleted=true 表示墓碑记录：该 key 已被删除，用来覆盖旧 SSTable 中的旧值。
+// 普通记录允许空 Value；墓碑的 Val 会被编码但业务上应保持为空。
 type Record struct {
 	Key     string
 	Val     string
@@ -104,6 +110,7 @@ type Footer struct {
 
 // SStable 表示一张不可变的 Sorted String Table。
 // 内存构建时 rs 保存排序后的记录；从磁盘打开时主要依赖 file、index 和 meta 查询。
+// Get/Scan 可并发读取；Close 不得与读取并发，并且应在对象不再使用时调用。
 type SStable struct {
 	path    string
 	file    *os.File
@@ -118,6 +125,7 @@ type SStable struct {
 
 // NewSStable 在内存中创建一张 SSTable 描述对象。
 // 它不会写磁盘，主要用于测试或构建阶段查看排序记录和 BloomFilter。
+// 输入可以无序或为空；函数复制切片、按 key 排序，并让重复 key 的最后一个输入版本获胜。
 func NewSStable(rs []Record) (*SStable, error) {
 	records := normalizeRecords(rs)
 	bf, err := buildBloomFilter(records)
@@ -134,6 +142,8 @@ func NewSStable(rs []Record) (*SStable, error) {
 
 // WriteSStable 将 records 写成一个完整的 SSTable 文件。
 // 写入顺序是 DataBlocks -> MetaBlock -> IndexBlock -> Footer。
+// 输入会复制、排序和按 key 去重；空输入会生成合法空表。path 应是未使用的唯一文件名，
+// 函数先写 path.tmp、Sync 后 Rename，成功返回的对象可读取且 Close 可安全调用。
 func WriteSStable(path string, rs []Record) (*SStable, error) {
 	records := normalizeRecords(rs)
 	bf, err := buildBloomFilter(records)
@@ -239,6 +249,8 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 
 // OpenSStable 打开磁盘上的 SSTable 文件。
 // 它只加载 Footer、MetaBlock 和 IndexBlock，DataBlock 会在查询时按需读取。
+// 文件过短、Magic/版本非法、Block 越界或 Meta/Index 校验失败会返回错误且自动关闭句柄。
+// 成功后调用方拥有返回对象，必须调用 Close。
 func OpenSStable(path string) (*SStable, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -311,6 +323,7 @@ func OpenSStable(path string) (*SStable, error) {
 }
 
 // SetBlockCache 设置 Store 共享的只读 Block Cache。
+// 传入 nil 会禁用该表后续读取缓存；Store 应在表发布给并发读者前完成设置。
 func (s *SStable) SetBlockCache(cache *BlockCache) {
 	if s != nil {
 		s.cache = cache
@@ -318,6 +331,7 @@ func (s *SStable) SetBlockCache(cache *BlockCache) {
 }
 
 // Close 关闭 SSTable 持有的文件句柄。
+// 内存表和 nil 接收者返回 nil；磁盘表只应关闭一次，且不能与 Get/Scan 并发。
 func (s *SStable) Close() error {
 	if s == nil || s.file == nil {
 		return nil
@@ -329,7 +343,7 @@ func (s *SStable) Close() error {
 
 // Get 查询 key 对应的 value。
 // 查询流程：BloomFilter 快速排除 -> IndexBlock 定位 DataBlock -> 解码 DataBlock 后二分查找。
-// 如果查询到墓碑，返回 ok=false。
+// 不存在和墓碑都返回空字符串、false；需要查看墓碑时使用 GetRecord。磁盘损坏通过 error 返回。
 func (s *SStable) Get(key string) (string, bool, error) {
 	record, ok, err := s.GetRecord(key)
 	if err != nil || !ok || record.Deleted {
@@ -340,6 +354,7 @@ func (s *SStable) Get(key string) (string, bool, error) {
 
 // GetRecord 查询 key 对应的原始 SSTable 记录。
 // 返回的 Record 可能是墓碑，调用方需要检查 Deleted 字段。
+// nil 表返回 ErrInvalidSSTable；Bloom Filter 或 key 范围排除时返回零值、false、nil。
 func (s *SStable) GetRecord(key string) (Record, bool, error) {
 	if s == nil {
 		return Record{}, false, ErrInvalidSSTable
@@ -403,12 +418,14 @@ func (s *SStable) readDataBlock(handle BlockHandle, useCache bool) ([]byte, func
 }
 
 // Contains 判断 key 是否存在于当前 SSTable。
+// 墓碑按不存在处理；磁盘校验或读取错误会原样返回。
 func (s *SStable) Contains(key string) (bool, error) {
 	_, ok, err := s.Get(key)
 	return ok, err
 }
 
 // Version 返回当前 SSTable 的磁盘格式版本。
+// nil 接收者返回 0；内存构建或未显式设置版本的表按当前版本报告。
 func (s *SStable) Version() uint32 {
 	if s == nil {
 		return 0
@@ -420,6 +437,7 @@ func (s *SStable) Version() uint32 {
 }
 
 // Meta 返回 SSTable 的元数据快照。
+// LabelCardinality map 会复制；BloomFilter 指针是只读共享对象，调用方不得 Reset 或 Add。
 func (s *SStable) Meta() MetaBlock {
 	meta := s.meta
 	if s.meta.LabelCardinality != nil {
@@ -432,6 +450,7 @@ func (s *SStable) Meta() MetaBlock {
 }
 
 // Index 返回索引项副本，避免调用方修改内部索引。
+// IndexEntry 中的字符串不可变；BlockHandle 仅用于诊断，不应绕过校验直接读取文件。
 func (s *SStable) Index() []IndexEntry {
 	index := make([]IndexEntry, len(s.index))
 	copy(index, s.index)
@@ -456,6 +475,7 @@ func (s *SStable) findIndexEntry(key string) (IndexEntry, bool) {
 // EncodeDataBlock 编码一个 DataBlock。
 // 单条记录格式：sharedKeyLen、nonSharedKeyLen、valueLen、flags、keySuffix、value。
 // block 末尾写 restart offsets 和 restart count，用于之后支持块内快速查找。
+// rs 通常应按 key 严格递增；函数可编码空切片，但该结果不代表一个含记录的 DataBlock。
 func EncodeDataBlock(rs []Record) ([]byte, error) {
 	var buf bytes.Buffer
 	restarts := make([]uint32, 0, (len(rs)/ReStartInterval)+1)
@@ -514,6 +534,7 @@ func EncodeDataBlock(rs []Record) ([]byte, error) {
 }
 
 // DecodeDataBlock 解码一个 DataBlock，并还原前缀压缩过的完整 key。
+// 截断长度、shared 前缀越界和未知 flags 返回 ErrInvalidSSTable；返回记录拥有独立字符串数据。
 func DecodeDataBlock(data []byte) ([]Record, error) {
 	if len(data) < 4 {
 		return nil, ErrInvalidSSTable
@@ -574,12 +595,14 @@ func DecodeDataBlock(data []byte) ([]Record, error) {
 
 // DecodeRcWithTrie 保留旧函数名以兼容已有调用。
 // 实际行为是把记录编码成带前缀压缩和 restart point 的 DataBlock。
+// 该兼容 API 无法返回编码错误；新代码应直接调用 EncodeDataBlock。
 func DecodeRcWithTrie(rs []Record) []byte {
 	data, _ := EncodeDataBlock(rs)
 	return data
 }
 
 // SharedLen 返回两个 key 从头开始相同的字节数。
+// 比较单位是字节而非 Unicode rune，nil/空输入返回 0。
 func SharedLen(target []byte, source []byte) int {
 	ml := min(len(target), len(source))
 	for i := 0; i < ml; i++ {

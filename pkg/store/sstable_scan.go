@@ -1,9 +1,13 @@
 package store
 
+// 本文件实现基于 IndexBlock 的 SSTable 半开区间扫描。
+// 前台扫描使用 Block Cache，Compaction/Verify 可通过内部入口绕过缓存。
+
 import "sort"
 
 // Scan 按 key 范围读取 SSTable 中的原始记录。
 // 范围采用 [startKey, endKey) 语义；空边界表示不限制，结果包含墓碑。
+// nil 接收者返回 ErrInvalidSSTable；startKey>=endKey 返回空结果而不是错误。
 func (s *SStable) Scan(startKey, endKey string) ([]Record, error) {
 	return s.scan(startKey, endKey, true)
 }
@@ -47,11 +51,13 @@ func (s *SStable) scan(startKey, endKey string, useCache bool) ([]Record, error)
 }
 
 // AllRecords 返回整张 SSTable 的有序记录，主要供 Compaction 使用。
+// 返回切片与表内部记录不共享可修改槽位；大表会读取并分配全部记录，应谨慎用于前台请求。
 func (s *SStable) AllRecords() ([]Record, error) {
 	return s.Scan("", "")
 }
 
 // Path 返回 SSTable 的磁盘路径。
+// NewSStable 创建的内存表和 nil 接收者返回空字符串。
 func (s *SStable) Path() string {
 	if s == nil {
 		return ""

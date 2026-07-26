@@ -1,5 +1,8 @@
 package store
 
+// 本文件覆盖结构化 Key 派生的时间范围、标签基数和标签 Bloom Filter。
+// 元数据只用于候选排除，测试不会把 Bloom Filter 命中当作最终匹配结果。
+
 import (
 	"path/filepath"
 	"testing"
