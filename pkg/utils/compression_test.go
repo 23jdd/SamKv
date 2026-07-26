@@ -4,6 +4,8 @@ package utils
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -92,5 +94,58 @@ func TestLZ4RejectsCorruptFrame(t *testing.T) {
 	value := Value{Message: []byte{0xff, 0x00}, Compression: CompressionLZ4}
 	if _, err := value.DecompressedMessage(); err == nil {
 		t.Fatal("corrupt LZ4 frame was accepted")
+	}
+}
+
+func TestZstdCompressionRoundTrip(t *testing.T) {
+	message := []byte("zstd structured log zstd structured log zstd structured log")
+	value, err := NewValueWithCompression(44, message, CompressionZstd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := value.DecompressedMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != string(message) {
+		t.Fatalf("decoded = %q, want %q", plain, message)
+	}
+}
+
+func TestZstdCodecsSupportConcurrentValues(t *testing.T) {
+	const workers = 16
+	var wg sync.WaitGroup
+	errorsCh := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			message := []byte(fmt.Sprintf("worker-%d repeated repeated repeated", id))
+			value, err := NewValueWithCompression(int64(id), message, CompressionZstd)
+			if err != nil {
+				errorsCh <- err
+				return
+			}
+			plain, err := value.DecompressedMessage()
+			if err != nil {
+				errorsCh <- err
+				return
+			}
+			if string(plain) != string(message) {
+				errorsCh <- fmt.Errorf("worker %d decoded %q", id, plain)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Error(err)
+	}
+}
+
+func TestZstdRejectsCorruptFrame(t *testing.T) {
+	value := Value{Message: []byte{0xff, 0x00}, Compression: CompressionZstd}
+	if _, err := value.DecompressedMessage(); err == nil {
+		t.Fatal("corrupt Zstd frame was accepted")
 	}
 }

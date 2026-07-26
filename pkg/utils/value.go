@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/golang/snappy"
+	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
 )
 
@@ -76,6 +78,12 @@ func ParseCompressionType(value string) (CompressionType, error) {
 	}
 }
 
+var (
+	zstdOnce    sync.Once
+	zstdEncoder *zstd.Encoder
+	zstdDecoder *zstd.Decoder
+	zstdInitErr error
+)
 var (
 	// ErrInvalidValue 表示 value 的二进制格式不合法。
 	ErrInvalidValue = errors.New("utils: invalid value")
@@ -195,6 +203,12 @@ func compressMessage(message []byte, compression CompressionType) ([]byte, error
 			return nil, err
 		}
 		return buf.Bytes(), nil
+	case CompressionZstd:
+		encoder, _, err := zstdCodecs()
+		if err != nil {
+			return nil, err
+		}
+		return encoder.EncodeAll(message, nil), nil
 	default:
 		return nil, ErrUnsupportedCompression
 	}
@@ -217,11 +231,29 @@ func decompressMessage(message []byte, compression CompressionType) ([]byte, err
 		return snappy.Decode(nil, message)
 	case CompressionLZ4:
 		return io.ReadAll(lz4.NewReader(bytes.NewReader(message)))
+	case CompressionZstd:
+		_, decoder, err := zstdCodecs()
+		if err != nil {
+			return nil, err
+		}
+		return decoder.DecodeAll(message, nil)
 	default:
 		return nil, ErrUnsupportedCompression
 	}
 }
 
+// zstdCodecs 延迟创建可并发复用的无状态 Zstd 编解码器。
+// 编码选择 SpeedFastest，避免结构化日志写入因高压缩级别产生明显 CPU 抖动。
+func zstdCodecs() (*zstd.Encoder, *zstd.Decoder, error) {
+	zstdOnce.Do(func() {
+		zstdEncoder, zstdInitErr = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		if zstdInitErr != nil {
+			return
+		}
+		zstdDecoder, zstdInitErr = zstd.NewReader(nil)
+	})
+	return zstdEncoder, zstdDecoder, zstdInitErr
+}
 func writeInt64(w io.Writer, v int64) error {
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(v))
