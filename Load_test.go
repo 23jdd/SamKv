@@ -13,6 +13,7 @@ func TestLoadReadsDurabilityCacheAndLevelSettings(t *testing.T) {
 	t.Setenv("MemTableLimit", "8192")
 	t.Setenv("AutoCheckpoint", "false")
 	t.Setenv("CompactionThreshold", "3")
+	t.Setenv("CompactionWorkers", "6")
 	t.Setenv("Retention", "2")
 	t.Setenv("MaxSizeBytes", "1000")
 	t.Setenv("BlockCacheBytes", "2000")
@@ -26,6 +27,7 @@ func TestLoadReadsDurabilityCacheAndLevelSettings(t *testing.T) {
 	if options.MemTableLimit != 8192 ||
 		options.AutoCheckpoint ||
 		options.CompactionThreshold != 3 ||
+		options.CompactionWorkers != 6 ||
 		options.Retention != 2*time.Hour ||
 		options.MaxSizeBytes != 1000 ||
 		options.BlockCacheBytes != 2000 ||

@@ -10,6 +10,7 @@ import (
 const (
 	DefaultMemTableLimit       = 4 * 1024 * 1024
 	DefaultCompactionThreshold = 4
+	DefaultCompactionWorkers   = 4
 	DefaultBlockCacheBytes     = 64 * 1024 * 1024
 	DefaultMaxLevels           = 4
 	DefaultLevelBaseSizeBytes  = 64 * 1024 * 1024
@@ -38,6 +39,8 @@ type Options struct {
 	AutoCheckpoint bool
 	// CompactionThreshold 是触发自动 Compaction 的 SSTable 数量，0 表示关闭自动 Compaction。
 	CompactionThreshold int
+	// CompactionWorkers 是单次分层 Compaction 最多并行执行的 key-range 子任务数。
+	CompactionWorkers int
 	// MaxLevels 是 LSM 层数，至少为 2；L0 用于刷盘文件。
 	MaxLevels int
 	// LevelBaseSizeBytes 是 L1 触发下推到 L2 的近似字节阈值。
@@ -62,6 +65,7 @@ func DefaultOptions() Options {
 		MemTableLimit:       DefaultMemTableLimit,
 		AutoCheckpoint:      true,
 		CompactionThreshold: DefaultCompactionThreshold,
+		CompactionWorkers:   DefaultCompactionWorkers,
 		MaxLevels:           DefaultMaxLevels,
 		LevelBaseSizeBytes:  DefaultLevelBaseSizeBytes,
 		LevelSizeMultiplier: DefaultLevelSizeMultiplier,
@@ -74,6 +78,7 @@ func DefaultOptions() Options {
 func validateOptions(options Options) error {
 	if options.MemTableLimit < 0 ||
 		options.CompactionThreshold < 0 ||
+		options.CompactionWorkers <= 0 ||
 		options.MaxLevels < 2 ||
 		options.LevelBaseSizeBytes <= 0 ||
 		options.LevelSizeMultiplier < 2 ||
