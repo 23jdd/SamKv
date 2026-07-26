@@ -27,7 +27,7 @@ SamKv 是一个使用 Go 实现、面向结构化日志场景的单机 LSM-Tree 
 | MemTable | 并发安全 SkipList、原子容量统计、墓碑、Mutable/Immutable 切换和后台刷盘 |
 | SSTable | DataBlock、MetaBlock、IndexBlock、Footer、前缀压缩、restart point、CRC32C Block 校验 |
 | 索引与缓存 | key/标签 BloomFilter、时间与 key 范围索引、共享字节容量 LRU Block Cache |
-| Compaction | L0 重叠合并、非零层增量下推、层容量阈值、底层墓碑与保留策略回收 |
+| Compaction | L0 重叠合并、非零层增量下推、key-range 并行子任务、原子 Manifest 发布、底层墓碑与保留策略回收 |
 | 元数据 | Manifest 原子发布与备份、格式版本、SSTable 层级和日志序列号 |
 | 运维 | 数据目录进程锁、Checkpoint、校验修复、全量备份恢复、格式升级、运行指标 |
 | 接入 | KV HTTP API、结构化日志写入/批量写入/QueryFormat 查询、Prometheus 指标、CLI |
@@ -150,7 +150,7 @@ curl -G http://127.0.0.1:9999/logs/query \
 curl http://127.0.0.1:9999/metrics
 ```
 
-`/metrics` 使用 Prometheus 文本格式，包含读写、Checkpoint、Compaction、MemTable、WAL/SSTable 字节数、每层文件数、Block Cache 命中/未命中/淘汰以及后台错误状态。指标为进程内统计，重启后计数器重新开始。
+`/metrics` 使用 Prometheus 文本格式，包含读写、Checkpoint、Compaction、MemTable、WAL/SSTable 字节数、每层文件数、Block Cache 命中/未命中/淘汰以及后台错误状态。`samkv_compaction_subtasks_total` 记录已启动的 key-range 子任务，`samkv_compaction_output_files_total` 记录成功发布的 Compaction 输出表。指标为进程内统计，重启后计数器重新开始。
 
 ## 命令行工具
 
@@ -281,7 +281,9 @@ _, _, _, _, _, _ = result, verification, backup, upgrade, stats, err
 
 `WriteBatch` 将整批数据一次追加到 WAL，再按顺序更新 MemTable；WAL 恢复仍按单条记录重放，因此它不是支持回滚的跨记录事务。
 
-后台 Compaction 使用层级阈值增量合并。L0 达到 `CompactionThreshold` 后合并全部 L0 及其与 L1 重叠的文件；L1 以上每次选择一个源文件和下一层重叠文件。墓碑、`Retention` 和 `MaxSizeBytes` 只在最底层回收，避免旧值重新出现。`Compact()` 保留为显式全量整理入口。
+后台 Compaction 使用层级阈值增量合并。L0 达到 `CompactionThreshold` 后合并全部 L0 及其与 L1 重叠的文件；L1 以上每次选择一个源文件和下一层重叠文件。单次分层 Compaction 根据 DataBlock 索引把 key 空间切成互不重叠的 `[start,end)` 子任务，最多使用 `CompactionWorkers` 个 goroutine；输入不足 `CompactionTaskBytes` 时自动减少任务数，避免小文件放大。各子任务并行扫描并生成独立 SSTable，所有输出成功后才一次性发布 Manifest，失败时清理未发布文件。Compaction 顺序扫描不会写入 Block Cache。
+
+墓碑、`Retention` 和 `MaxSizeBytes` 只在最底层回收，避免旧值重新出现。`MaxSizeBytes` 对全部子任务结果统一计算，不会被每个子任务重复使用。`Compact()` 保留为显式全量整理入口；它仍是单任务全量整理。`CompactionResult.Path` 保留为首个输出路径，新增代码应使用 `Paths`、`OutputTables` 和 `Subtasks` 查看并行结果。
 
 ## QueryFormat
 
@@ -324,6 +326,8 @@ start, end := query.TimeRange(time.Now().UTC())
 | `MemTableLimit` | 4 MiB | Active MemTable 近似字节阈值，`0` 表示不自动切换 |
 | `AutoCheckpoint` | `true` | 达到阈值后切换 Immutable MemTable 并在后台刷盘 |
 | `CompactionThreshold` | `4` | L0 文件触发合并的数量，`0` 表示关闭 L0 自动触发 |
+| `CompactionWorkers` | `4` | 单次分层 Compaction 的最大并行子任务数 |
+| `CompactionTaskBytes` | 8 MiB | 每增加一个并行子任务所需的近似输入量，防止小 Compaction 产生过多文件 |
 | `MaxLevels` | `4` | LSM 总层数，至少为 2 |
 | `LevelBaseSizeBytes` | 64 MiB | L1 向 L2 下推的容量阈值 |
 | `LevelSizeMultiplier` | `10` | 相邻非零层容量倍率 |
@@ -344,6 +348,8 @@ Port=9999
 MemTableLimit=4194304
 AutoCheckpoint=true
 CompactionThreshold=4
+CompactionWorkers=4
+CompactionTaskBytes=8388608
 MaxLevels=4
 LevelBaseSizeBytes=67108864
 LevelSizeMultiplier=10
@@ -517,7 +523,7 @@ SamKv 当前是单节点、本地文件系统存储，适合作为嵌入式 KV�
 - 没有分片、副本、一致性协议、远程对象存储或跨节点故障转移。
 - HTTP 服务没有认证、授权、TLS、租户隔离和请求级限流。
 - QueryFormat 目前支持标签等值和内容子串匹配，不支持正则、全文倒排索引、聚合或查询计划。
-- 分层 Compaction 是基础增量实现，还没有并行子任务、I/O 限速、写停顿控制和 SSD/HDD 分层。
+- 分层 Compaction 已支持单次任务内的 key-range 并行，但顶层版本编辑仍由 `maintenanceMu` 串行；还没有 I/O 限速、写停顿控制和 SSD/HDD 分层。
 - 修复工具能检测并隔离损坏文件，但无法重建其中已经丢失的记录。
 - 指标是进程内状态；备份是本地全量快照，尚无远程增量备份、PITR 和自动恢复演练。
 - 格式已具备显式版本和 v1/v2 兼容读取，但仍需要长期兼容矩阵、模糊测试和跨版本升级测试。
