@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/23jdd/SamKv/pkg/store"
+	"github.com/23jdd/SamKv/pkg/utils"
 )
 
 func TestLoadReadsDurabilityCacheAndLevelSettings(t *testing.T) {
@@ -17,14 +18,18 @@ func TestLoadReadsDurabilityCacheAndLevelSettings(t *testing.T) {
 	t.Setenv("CompactionThreshold", "3")
 	t.Setenv("CompactionWorkers", "6")
 	t.Setenv("CompactionTaskBytes", "4096")
+	t.Setenv("CompactionRateLimitBytesPerSec", "8192")
 	t.Setenv("Retention", "2")
 	t.Setenv("MaxSizeBytes", "1000")
 	t.Setenv("BlockCacheBytes", "2000")
+	t.Setenv("CompressionType", "zstd")
 	t.Setenv("MaxLevels", "5")
 	t.Setenv("LevelBaseSizeBytes", "3000")
 	t.Setenv("LevelSizeMultiplier", "4")
 	t.Setenv("WALSyncPolicy", "every-write")
 	t.Setenv("WALSyncInterval", "3ms")
+	t.Setenv("WALSegmentSize", "1048576")
+	t.Setenv("WALSegmentMaxRecords", "500")
 
 	options := Load()
 	if options.MemTableLimit != 8192 ||
@@ -32,14 +37,18 @@ func TestLoadReadsDurabilityCacheAndLevelSettings(t *testing.T) {
 		options.CompactionThreshold != 3 ||
 		options.CompactionWorkers != 6 ||
 		options.CompactionTaskBytes != 4096 ||
+		options.CompactionRateLimitBytesPerSec != 8192 ||
 		options.Retention != 2*time.Hour ||
 		options.MaxSizeBytes != 1000 ||
 		options.BlockCacheBytes != 2000 ||
+		options.CompressionType != utils.CompressionZstd ||
 		options.MaxLevels != 5 ||
 		options.LevelBaseSizeBytes != 3000 ||
 		options.LevelSizeMultiplier != 4 ||
 		options.WALSyncPolicy != store.WALSyncEveryWrite ||
-		options.WALSyncInterval != 3*time.Millisecond {
+		options.WALSyncInterval != 3*time.Millisecond ||
+		options.WALSegmentSize != 1048576 ||
+		options.WALSegmentMaxRecords != 500 {
 		t.Fatalf("Load() = %#v", options)
 	}
 }
@@ -84,4 +93,12 @@ func unsetenvForTest(t *testing.T, key string) {
 		}
 		_ = os.Unsetenv(key)
 	})
+}
+
+func TestLoadKeepsDefaultCompressionForUnknownName(t *testing.T) {
+	t.Setenv("CompressionType", "brotli")
+	options := LoadEnvFile("")
+	if options.CompressionType != utils.CompressionSnappy {
+		t.Fatalf("CompressionType = %v, want default snappy", options.CompressionType)
+	}
 }

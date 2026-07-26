@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/23jdd/SamKv/pkg/store"
+	"github.com/23jdd/SamKv/pkg/utils"
 	"github.com/joho/godotenv"
 )
 
@@ -40,6 +41,9 @@ func LoadEnvFile(path string) store.Options {
 	if value, err := strconv.ParseInt(os.Getenv("CompactionTaskBytes"), 10, 64); err == nil {
 		options.CompactionTaskBytes = value
 	}
+	if value, err := strconv.ParseInt(os.Getenv("CompactionRateLimitBytesPerSec"), 10, 64); err == nil {
+		options.CompactionRateLimitBytesPerSec = value
+	}
 	if value, err := strconv.Atoi(os.Getenv("Retention")); err == nil {
 		options.Retention = time.Duration(value) * time.Hour
 	}
@@ -48,6 +52,9 @@ func LoadEnvFile(path string) store.Options {
 	}
 	if value, err := strconv.ParseInt(os.Getenv("BlockCacheBytes"), 10, 64); err == nil {
 		options.BlockCacheBytes = value
+	}
+	if value, err := utils.ParseCompressionType(os.Getenv("CompressionType")); err == nil {
+		options.CompressionType = value
 	}
 	if value, err := strconv.Atoi(os.Getenv("MaxLevels")); err == nil {
 		options.MaxLevels = value
@@ -66,6 +73,12 @@ func LoadEnvFile(path string) store.Options {
 	}
 	if value, err := time.ParseDuration(os.Getenv("WALSyncInterval")); err == nil {
 		options.WALSyncInterval = value
+	}
+	if value, err := strconv.ParseInt(os.Getenv("WALSegmentSize"), 10, 64); err == nil {
+		options.WALSegmentSize = value
+	}
+	if value, err := strconv.ParseUint(os.Getenv("WALSegmentMaxRecords"), 10, 64); err == nil {
+		options.WALSegmentMaxRecords = value
 	}
 	return options
 }
