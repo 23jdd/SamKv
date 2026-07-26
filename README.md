@@ -512,7 +512,7 @@ go run ./cmd/samkv-stress \
 
 ### 测试方法
 
-以下历史基线结果于 2026-07-24 在 Windows/amd64、Go 1.25.1、Intel Core i7-14650HX 上取得。当前默认结构化日志压缩已从 Gzip 调整为 Snappy，且 WAL 已分段；比较新版本性能时应使用相同命令重新测量：
+以下结果 在 Windows/amd64、Go 1.25.1、Intel Core i7-14650HX 上取得，覆盖当前默认 Snappy 压缩、分段 WAL 和 64 KiB WAL Buffer 实现：
 
 1. 压力工具只构建一次，各场景顺序执行，避免不同场景争抢磁盘。
 2. 每轮使用新的临时数据目录，执行写入、Checkpoint、关闭、重开和完整校验。
@@ -528,30 +528,34 @@ go run ./cmd/samkv-stress \
 
 | 模式 | WAL 策略 | 记录数 | 并发 | Payload | 写吞吐中位数 | 3 轮范围 | Payload 吞吐 |
 | --- | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| KV | interval | 5,000 | 1 | random / 128 B | 431,012 ops/s | 419,375-458,476 | 52.61 MiB/s |
-| KV | interval | 5,000 | 8 | random / 128 B | 373,768 ops/s | 334,135-411,336 | 45.63 MiB/s |
-| KV | every-write | 1,000 | 1 | random / 128 B | 3,161 ops/s | 2,650-3,405 | 0.39 MiB/s |
-| KV | every-write | 1,000 | 8 | random / 128 B | 3,423 ops/s | 3,392-3,447 | 0.42 MiB/s |
-| 日志 | interval | 5,000 | 1 | random / 128 B | 6,212 ops/s | 6,056-6,363 | 0.76 MiB/s |
-| 日志 | interval | 5,000 | 8 | random / 128 B | 15,949 ops/s | 15,632-16,321 | 1.95 MiB/s |
-| 日志 | interval | 5,000 | 8 | repeated / 128 B | 15,169 ops/s | 14,288-16,225 | 1.85 MiB/s |
-| 日志 | interval | 5,000 | 8 | random / 1,024 B | 15,629 ops/s | 15,310-16,136 | 15.26 MiB/s |
-| 日志 | every-write | 1,000 | 1 | random / 128 B | 2,232 ops/s | 2,120-2,255 | 0.27 MiB/s |
-| 日志 | every-write | 1,000 | 8 | random / 128 B | 2,765 ops/s | 2,701-2,871 | 0.34 MiB/s |
+| KV | interval | 5,000 | 1 | random / 128 B | 369,486 ops/s | 96,623-483,363 | 45.10 MiB/s |
+| KV | interval | 5,000 | 8 | random / 128 B | 417,397 ops/s | 144,526-425,159 | 50.95 MiB/s |
+| KV | every-write | 1,000 | 1 | random / 128 B | 3,354 ops/s | 3,182-3,467 | 0.41 MiB/s |
+| KV | every-write | 1,000 | 8 | random / 128 B | 3,319 ops/s | 3,283-3,374 | 0.41 MiB/s |
+| 日志 | interval | 5,000 | 1 | random / 128 B | 274,136 ops/s | 265,175-278,657 | 33.46 MiB/s |
+| 日志 | interval | 5,000 | 8 | random / 128 B | 258,147 ops/s | 254,624-277,194 | 31.51 MiB/s |
+| 日志 | interval | 5,000 | 8 | repeated / 128 B | 404,760 ops/s | 386,763-408,090 | 49.41 MiB/s |
+| 日志 | interval | 5,000 | 8 | random / 1,024 B | 94,641 ops/s | 92,206-96,399 | 92.42 MiB/s |
+| 日志 | every-write | 1,000 | 1 | random / 128 B | 2,889 ops/s | 2,654-3,480 | 0.35 MiB/s |
+| 日志 | every-write | 1,000 | 8 | random / 128 B | 3,347 ops/s | 3,181-3,447 | 0.41 MiB/s |
 
 大样本矩阵用于验证吞吐稳定性、分阶段耗时和多 SSTable 恢复：
 
 | 模式 | WAL 策略 | 记录数 | Payload | 写吞吐中位数 | Checkpoint | 重开 | 校验 | 总耗时 | SSTable |
 | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| KV | interval | 50,000 | random / 128 B | 455,678 ops/s | 155.8 ms | 43.7 ms | 190.8 ms | 501.7 ms | 1 |
-| KV | every-write | 10,000 | random / 128 B | 3,349 ops/s | 43.2 ms | 20.7 ms | 53.6 ms | 3,114.9 ms | 1 |
-| 日志 | interval | 50,000 | random / 128 B | 13,159 ops/s | 172.0 ms | 53.6 ms | 380.7 ms | 4,412.4 ms | 1 |
-| 日志 | interval | 20,000 | random / 1,024 B | 15,636 ops/s | 52.7 ms | 65.3 ms | 218.4 ms | 1,608.1 ms | 2 |
-| 日志 | every-write | 10,000 | random / 128 B | 2,451 ops/s | 65.1 ms | 38.9 ms | 96.7 ms | 4,306.2 ms | 1 |
+| KV | interval | 50,000 | random / 128 B | 455,047 ops/s | 148.4 ms | 43.0 ms | 195.4 ms | 497.6 ms | 1 |
+| KV | every-write | 10,000 | random / 128 B | 3,146 ops/s | 125.2 ms | 26.5 ms | 48.5 ms | 3,440.3 ms | 1 |
+| 日志 | interval | 50,000 | random / 128 B | 258,262 ops/s | 174.4 ms | 55.7 ms | 73.4 ms | 496.1 ms | 1 |
+| 日志 | interval | 20,000 | random / 1,024 B | 94,285 ops/s | 163.6 ms | 66.9 ms | 98.0 ms | 544.8 ms | 2 |
+| 日志 | every-write | 10,000 | random / 128 B | 2,862 ops/s | 100.6 ms | 44.7 ms | 29.6 ms | 3,703.8 ms | 1 |
 
 总耗时包含写入、Checkpoint、两次关闭、重新打开和完整校验，因此不能用记录数除以总耗时替代纯写吞吐。
 
+结果表明，`interval` 批量刷盘适合追求吞吐的场景：50,000 条 128 B 随机日志的写吞吐中位数为 258,262 ops/s。`every-write` 在每次写入返回前执行 fsync，吞吐稳定在约 2,900-3,300 ops/s，这是更强持久性保证对应的磁盘同步成本。8 路并发并不总能提高单机吞吐，瓶颈仍可能落在 WAL 串行写入和文件系统；5,000 条的小样本也更容易受到启动、缓存和调度波动影响。1,024 B 日志虽然操作吞吐降至 94,641 ops/s，但有效 Payload 吞吐升至 92.42 MiB/s。
+
 ### 基准结果
+
+以下微基准未在本轮压力测试中重跑，保留为 2026-07-24 基线。
 
 基准命令：
 
