@@ -11,6 +11,10 @@ import (
 	"sort"
 )
 
+// WriteSStable 将 records 写成一个完整的 SSTable 文件。
+// 写入顺序是 DataBlocks -> MetaBlock -> IndexBlock -> Footer。
+// 输入会复制、排序和按 key 去重；空输入会生成合法空表。path 应是未使用的唯一文件名，
+// 函数先写 path.tmp、Sync 后 Rename，成功返回的对象可读取且 Close 可安全调用。
 func WriteSStable(path string, rs []Record) (*SStable, error) {
 	return writeSStable(path, rs, nil)
 }
