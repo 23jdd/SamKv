@@ -105,7 +105,7 @@ func TestRepairDirectorySupportsBackupOnlyManifest(t *testing.T) {
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(manifestPath(dir), manifestBackupPath(dir)); err != nil {
+	if err := os.Rename(currentPath(dir), currentBackupPath(dir)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,8 +116,8 @@ func TestRepairDirectorySupportsBackupOnlyManifest(t *testing.T) {
 	if report.ValidTables != 1 {
 		t.Fatalf("repair report = %#v", report)
 	}
-	if _, err := os.Stat(manifestPath(dir)); err != nil {
-		t.Fatalf("repaired MANIFEST: %v", err)
+	if _, err := os.Stat(currentPath(dir)); err != nil {
+		t.Fatalf("repaired CURRENT: %v", err)
 	}
 	reopened, err := NewStoreManager(dir, 1024)
 	if err != nil {

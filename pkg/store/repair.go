@@ -100,9 +100,9 @@ func RepairDirectory(dir string) (RepairReport, error) {
 	}
 
 	if manifestErr == nil && manifestOK {
-		source := manifestPath(dir)
-		if _, err := os.Stat(source); errors.Is(err, os.ErrNotExist) {
-			source = manifestBackupPath(dir)
+		source, _, err := activeManifestPath(dir)
+		if err != nil {
+			return report, err
 		}
 		backup := manifestPath(dir) + ".repair.bak"
 		if err := copyFile(source, backup); err != nil {

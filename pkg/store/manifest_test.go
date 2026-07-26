@@ -64,7 +64,7 @@ func TestLoadManifestFallsBackToBackup(t *testing.T) {
 	if err := saveManifest(dir, want); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(manifestPath(dir), manifestBackupPath(dir)); err != nil {
+	if err := os.Rename(currentPath(dir), currentBackupPath(dir)); err != nil {
 		t.Fatal(err)
 	}
 

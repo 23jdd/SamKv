@@ -85,13 +85,25 @@ func (st *StoreManger) Backup(destination string) (BackupMetadata, error) {
 	if err := st.wm.Flush(); err != nil {
 		return BackupMetadata{}, err
 	}
-	if _, err := os.Stat(manifestPath(st.dir)); errors.Is(err, os.ErrNotExist) {
+	activeManifest, manifestExists, err := activeManifestPath(st.dir)
+	if err != nil {
+		return BackupMetadata{}, err
+	}
+	if !manifestExists {
 		if err := saveManifest(st.dir, st.manifest); err != nil {
+			return BackupMetadata{}, err
+		}
+		activeManifest, _, err = activeManifestPath(st.dir)
+		if err != nil {
 			return BackupMetadata{}, err
 		}
 	}
 
-	fileNames := []string{manifestFileName}
+	manifestName := filepath.Base(activeManifest)
+	fileNames := []string{manifestName}
+	if manifestName != manifestFileName {
+		fileNames = append([]string{currentFileName}, fileNames...)
+	}
 	segments, err := wal.ListSegments(st.dir)
 	if err != nil {
 		return BackupMetadata{}, err
@@ -160,8 +172,21 @@ func VerifyBackup(source string) (BackupMetadata, error) {
 		}
 		available[expected.Name] = struct{}{}
 	}
-	if _, ok := available[manifestFileName]; !ok {
-		return BackupMetadata{}, fmt.Errorf("store: backup is missing %s", manifestFileName)
+	activeManifest, manifestExists, err := activeManifestPath(source)
+	if err != nil {
+		return BackupMetadata{}, err
+	}
+	if !manifestExists {
+		return BackupMetadata{}, errors.New("store: backup is missing an active Manifest")
+	}
+	manifestName := filepath.Base(activeManifest)
+	if _, ok := available[manifestName]; !ok {
+		return BackupMetadata{}, fmt.Errorf("store: backup is missing %s", manifestName)
+	}
+	if manifestName != manifestFileName {
+		if _, ok := available[currentFileName]; !ok {
+			return BackupMetadata{}, fmt.Errorf("store: backup is missing %s", currentFileName)
+		}
 	}
 	hasWALSegment := false
 	for name := range available {
@@ -173,7 +198,7 @@ func VerifyBackup(source string) (BackupMetadata, error) {
 	if !hasWALSegment {
 		return BackupMetadata{}, errors.New("store: backup is missing WAL segments")
 	}
-	manifest, err := readManifest(filepath.Join(source, manifestFileName))
+	manifest, err := readManifest(activeManifest)
 	if err != nil {
 		return BackupMetadata{}, err
 	}

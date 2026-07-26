@@ -37,7 +37,7 @@ func TestBackupVerifyAndRestoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.FormatVersion != CurrentBackupVersion || len(metadata.Files) < 3 {
+	if metadata.FormatVersion != CurrentBackupVersion || len(metadata.Files) < 4 {
 		t.Fatalf("backup metadata = %#v", metadata)
 	}
 	if _, err := VerifyBackup(backupDir); err != nil {

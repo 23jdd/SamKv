@@ -42,6 +42,6 @@ func ExampleStoreManger_Backup() {
 	fmt.Println(len(metadata.Files), backupErr, verifyErr, restoreErr)
 	fmt.Println(value, found)
 	// Output:
-	// 3 <nil> <nil> <nil>
+	// 4 <nil> <nil> <nil>
 	// v1 true
 }
