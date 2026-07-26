@@ -1,5 +1,8 @@
 package store
 
+// 本文件实现 Store 写入路径上的有序 MemTable、近似容量统计和墓碑。
+// Store 负责协调冻结与写入；直接使用 MemTable 时，不要让 MarkImmutable/Clear 与 Put/Delete 并发。
+
 import (
 	"errors"
 	"sync/atomic"
@@ -30,6 +33,7 @@ type MemValue struct {
 
 // MemTable 是写入路径上的有序内存表。
 // SkipList 自己负责保护节点结构；MemTable 只用 atomic 维护 size 和 mutable 状态。
+// 零值不可用，必须通过 NewMemTable 创建。点读写可并发，但冻结和清空需要由所有者串行协调。
 type MemTable struct {
 	table *skiplist.SkipList[string, MemValue]
 	size  atomic.Int64
@@ -60,7 +64,7 @@ func NewMemTable(limit int) *MemTable {
 }
 
 // Get 根据 key 查询 value。
-// 如果 key 对应的是墓碑，返回 ok=false。
+// 如果 key 对应的是墓碑或不存在，均返回空字符串和 false；需要区分二者时使用 GetEntry。
 func (mt *MemTable) Get(key string) (string, bool) {
 	value, ok := mt.GetEntry(key)
 	if !ok || value.Deleted {
@@ -77,6 +81,7 @@ func (mt *MemTable) GetEntry(key string) (MemValue, bool) {
 
 // Put 插入或更新 key/value。
 // 如果 key 已存在，会替换旧记录；如果旧记录是墓碑，会重新变成普通值。
+// 空 key/value 在 MemTable 层合法；冻结后返回 ErrImmutableMemTable。
 func (mt *MemTable) Put(key string, value string) error {
 	if !mt.mutable.Load() {
 		return ErrImmutableMemTable
@@ -133,7 +138,8 @@ func (mt *MemTable) Flush() []Record {
 }
 
 // MarkImmutable 将 MemTable 冻结为只读。
-// 冻结后的 MemTable 会拒绝新的 Put/Delete。
+// 冻结后的 MemTable 会拒绝新的 Put/Delete。调用方必须先阻止新写入，再冻结并导出快照；
+// 它与已经越过 mutable 检查的并发 Put/Delete 之间不提供事务屏障。
 func (mt *MemTable) MarkImmutable() {
 	mt.mutable.Store(false)
 }
@@ -144,6 +150,7 @@ func (mt *MemTable) Mutable() bool {
 }
 
 // Size 返回当前 MemTable 的近似大小。
+// 数值用于刷盘阈值而非精确内存计费，包含固定估算开销且不含跳表所有真实分配。
 func (mt *MemTable) Size() int {
 	return int(mt.size.Load())
 }
@@ -161,6 +168,7 @@ func (mt *MemTable) ShouldFlush() bool {
 }
 
 // Clear 清空 MemTable，并恢复为可写状态。
+// Store 正常流程会创建新 MemTable，而不是复用已冻结实例；不得与外部读写并发用于事务重置。
 func (mt *MemTable) Clear() {
 	mt.table.Clear()
 	mt.size.Store(0)
@@ -168,6 +176,7 @@ func (mt *MemTable) Clear() {
 }
 
 // ComputeSize 计算一条普通 key/value 记录在 MemTable 中的近似大小。
+// 参数应为非负字节长度；函数不校验负数，也不代表 Go 堆上的精确占用。
 func ComputeSize(keylen int, valuelen int) int {
 	return keylen + valuelen + ApproximateEntrySize
 }

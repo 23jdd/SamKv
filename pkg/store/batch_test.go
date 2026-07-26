@@ -1,5 +1,8 @@
 package store
 
+// 本文件覆盖批次内同 key 顺序覆盖、大记录 WAL 编码、墓碑以及关闭重开后的恢复。
+// 用例证明操作顺序稳定，但不把 WriteBatch 描述为支持回滚的数据库事务。
+
 import (
 	"strings"
 	"testing"

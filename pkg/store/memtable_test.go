@@ -1,5 +1,8 @@
 package store
 
+// 本文件覆盖 MemTable 覆盖写、墓碑、近似大小、有序快照、冻结和重新清空边界。
+// 测试直接操作 MemTable，因此显式验证 Store 通常隐藏的原始墓碑记录。
+
 import (
 	"errors"
 	"testing"
