@@ -68,3 +68,27 @@ func TestInMemorySSTableIteratorBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSSTableIteratorStopsAfterLastBlock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "end.sst")
+	if _, err := WriteSStable(path, []Record{{Key: "a"}, {Key: "b"}}); err != nil {
+		t.Fatal(err)
+	}
+	table, err := OpenSStable(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer table.Close()
+	iterator, err := table.NewIterator("", "z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for iterator.Valid() {
+		count++
+		iterator.Next()
+	}
+	if count != 2 || iterator.Error() != nil {
+		t.Fatalf("full iteration count = %d, error = %v", count, iterator.Error())
+	}
+}

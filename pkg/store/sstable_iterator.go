@@ -107,7 +107,7 @@ func (it *SSTableIterator) positionCurrent() {
 			it.valid = true
 			return
 		}
-		if it.table == nil || it.table.file == nil {
+		if it.table == nil || it.table.file == nil || it.blockIndex >= len(it.table.index) {
 			it.valid = false
 			return
 		}
