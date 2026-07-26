@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/golang/snappy"
 )
 
 const valueVersion byte = 1
@@ -179,6 +181,8 @@ func compressMessage(message []byte, compression CompressionType) ([]byte, error
 			return nil, err
 		}
 		return buf.Bytes(), nil
+	case CompressionSnappy:
+		return snappy.Encode(nil, message), nil
 	default:
 		return nil, ErrUnsupportedCompression
 	}
@@ -197,6 +201,8 @@ func decompressMessage(message []byte, compression CompressionType) ([]byte, err
 		}
 		defer reader.Close()
 		return io.ReadAll(reader)
+	case CompressionSnappy:
+		return snappy.Decode(nil, message)
 	default:
 		return nil, ErrUnsupportedCompression
 	}

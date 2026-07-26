@@ -42,3 +42,33 @@ func TestCompressionTypeRejectsUnknownValues(t *testing.T) {
 		t.Fatalf("MarshalBinary() error = %v", err)
 	}
 }
+
+func TestSnappyCompressionRoundTrip(t *testing.T) {
+	message := []byte("repeated log message repeated log message repeated log message")
+	value, err := NewValueWithCompression(42, message, CompressionSnappy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := value.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := UnmarshalValue(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := decoded.DecompressedMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != string(message) || decoded.Compression != CompressionSnappy {
+		t.Fatalf("decoded = %q with %v", plain, decoded.Compression)
+	}
+}
+
+func TestSnappyRejectsCorruptPayload(t *testing.T) {
+	value := Value{Message: []byte{0xff}, Compression: CompressionSnappy}
+	if _, err := value.DecompressedMessage(); err == nil {
+		t.Fatal("corrupt Snappy payload was accepted")
+	}
+}
