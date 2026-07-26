@@ -1,5 +1,8 @@
 package store
 
+// 本文件实现持有目录锁的离线修复：回放 WAL、重建 Manifest，并把损坏 SSTable 移入 corrupt 目录。
+// 修复以已有 Manifest 为权威，不会把崩溃遗留的孤立 SSTable 自动纳入可见数据。
+
 import (
 	"errors"
 	"fmt"
@@ -20,6 +23,7 @@ type RepairReport struct {
 
 // RepairDirectory 在持有目录锁时校验 MANIFEST 引用的 SSTable，并隔离损坏文件。
 // 修复以 MANIFEST 为权威来源，不会把未发布的孤立 SSTable 自动加入 Store。
+// 必须在 Store 关闭后调用；缺失/损坏文件会从新 Manifest 移除，可能造成对应 key 永久不可见。
 func RepairDirectory(dir string) (RepairReport, error) {
 	lock, err := acquireDirectoryLock(dir)
 	if err != nil {

@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证旧版 SSTable/Manifest 升级、无需升级的空操作和升级后重新打开。
+
 import (
 	"errors"
 	"os"

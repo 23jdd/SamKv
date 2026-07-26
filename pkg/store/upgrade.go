@@ -1,5 +1,8 @@
 package store
 
+// 本文件把旧 SSTable/Manifest 格式重写成当前版本。
+// 升级前会 Checkpoint，必要时执行全量 Compaction，因此调用方应预留完整重写所需的磁盘和 I/O 时间。
+
 // CurrentSSTableVersion 返回当前写入的 SSTable 格式版本。
 const CurrentSSTableVersion = currentSSTableVersion
 
@@ -12,6 +15,7 @@ type UpgradeResult struct {
 }
 
 // UpgradeFormat 先执行 Checkpoint，再把旧版 SSTable 重写为当前格式。
+// 已是当前版本时不重写；旧版表存在时会合并为当前格式，OutputPath 可能因所有记录被淘汰而为空。
 func (st *StoreManger) UpgradeFormat() (UpgradeResult, error) {
 	if _, err := st.Checkpoint(); err != nil {
 		return UpgradeResult{}, err

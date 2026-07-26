@@ -1,5 +1,8 @@
 package store
 
+// 本文件创建带 SHA-256 清单的一致性备份，校验备份，并把备份原子恢复到新目录。
+// 备份是本地文件副本，不包含跨主机传输、加密、增量快照或远端保留策略。
+
 import (
 	"crypto/sha256"
 	"encoding/hex"
@@ -35,6 +38,7 @@ type BackupMetadata struct {
 }
 
 // Backup 先执行 Checkpoint，再把一致的数据文件复制到新的备份目录。
+// destination 必须尚不存在且不能位于数据目录内部；复制期间维护锁和读锁会阻止文件集合变化。
 func (st *StoreManger) Backup(destination string) (BackupMetadata, error) {
 	if _, err := st.Checkpoint(); err != nil {
 		return BackupMetadata{}, err
@@ -120,6 +124,7 @@ func (st *StoreManger) Backup(destination string) (BackupMetadata, error) {
 }
 
 // VerifyBackup 校验备份文件摘要、Manifest 引用和 SSTable 完整性。
+// 清单之外的额外文件会被忽略；清单内缺失、摘要不符或 SSTable 损坏都会返回错误。
 func VerifyBackup(source string) (BackupMetadata, error) {
 	data, err := os.ReadFile(filepath.Join(source, backupMetadataFile))
 	if err != nil {
@@ -173,6 +178,7 @@ func VerifyBackup(source string) (BackupMetadata, error) {
 }
 
 // RestoreBackup 将校验通过的备份恢复到一个尚不存在的数据目录。
+// destination 的父目录可以不存在，但 destination 本身存在时绝不覆盖。
 func RestoreBackup(source, destination string) error {
 	metadata, err := VerifyBackup(source)
 	if err != nil {

@@ -1,5 +1,8 @@
 package store
 
+// 本文件对 SSTable 的 Block 校验和、key 顺序、元数据范围和 BloomFilter 无假阴性约束做完整检查。
+// Verify 会顺序读取全部数据，不应放在延迟敏感的请求路径。
+
 import (
 	"errors"
 	"fmt"

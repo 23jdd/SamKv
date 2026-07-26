@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证损坏文件隔离、缺失文件处理、孤立文件忽略、WAL 保留和目录锁。
+
 import (
 	"os"
 	"path/filepath"

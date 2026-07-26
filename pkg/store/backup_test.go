@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证备份、摘要篡改检测、目标目录约束、恢复和重新打开后的数据一致性。
+
 import (
 	"os"
 	"path/filepath"

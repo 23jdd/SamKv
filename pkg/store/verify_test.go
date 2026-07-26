@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证完整 SSTable、损坏 DataBlock、错误记录数、key 顺序和 Store 汇总报告。
+
 import (
 	"errors"
 	"path/filepath"
