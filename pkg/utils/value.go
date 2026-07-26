@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/golang/snappy"
+	"github.com/pierrec/lz4/v4"
 )
 
 const valueVersion byte = 1
@@ -183,6 +184,17 @@ func compressMessage(message []byte, compression CompressionType) ([]byte, error
 		return buf.Bytes(), nil
 	case CompressionSnappy:
 		return snappy.Encode(nil, message), nil
+	case CompressionLZ4:
+		var buf bytes.Buffer
+		writer := lz4.NewWriter(&buf)
+		if _, err := writer.Write(message); err != nil {
+			_ = writer.Close()
+			return nil, err
+		}
+		if err := writer.Close(); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
 	default:
 		return nil, ErrUnsupportedCompression
 	}
@@ -203,6 +215,8 @@ func decompressMessage(message []byte, compression CompressionType) ([]byte, err
 		return io.ReadAll(reader)
 	case CompressionSnappy:
 		return snappy.Decode(nil, message)
+	case CompressionLZ4:
+		return io.ReadAll(lz4.NewReader(bytes.NewReader(message)))
 	default:
 		return nil, ErrUnsupportedCompression
 	}

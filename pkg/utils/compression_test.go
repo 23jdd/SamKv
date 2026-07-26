@@ -72,3 +72,25 @@ func TestSnappyRejectsCorruptPayload(t *testing.T) {
 		t.Fatal("corrupt Snappy payload was accepted")
 	}
 }
+
+func TestLZ4CompressionRoundTrip(t *testing.T) {
+	message := []byte("lz4 access log lz4 access log lz4 access log")
+	value, err := NewValueWithCompression(43, message, CompressionLZ4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := value.DecompressedMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != string(message) {
+		t.Fatalf("decoded = %q, want %q", plain, message)
+	}
+}
+
+func TestLZ4RejectsCorruptFrame(t *testing.T) {
+	value := Value{Message: []byte{0xff, 0x00}, Compression: CompressionLZ4}
+	if _, err := value.DecompressedMessage(); err == nil {
+		t.Fatal("corrupt LZ4 frame was accepted")
+	}
+}
