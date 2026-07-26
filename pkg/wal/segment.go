@@ -4,8 +4,10 @@ package wal
 // 只有形如 wal-<20 位十进制 ID>.log 的文件会进入恢复顺序，其他文件一律忽略。
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -123,4 +125,30 @@ func prepareSegments(dir string) ([]Segment, error) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// countSegmentRecords 只统计边界完整且长度安全的物理帧。
+// checksum 由恢复阶段处理；尾部截断或非法长度之后的数据不计入轮转阈值。
+func countSegmentRecords(path string) uint64 {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	var count uint64
+	var header [headerSize]byte
+	for {
+		if _, err := io.ReadFull(file, header[:]); err != nil {
+			return count
+		}
+		payloadLength := binary.LittleEndian.Uint32(header[4:8])
+		if payloadLength > maxRecordPayloadSize {
+			return count
+		}
+		if _, err := io.CopyN(io.Discard, file, int64(payloadLength)); err != nil {
+			return count
+		}
+		count++
+	}
 }

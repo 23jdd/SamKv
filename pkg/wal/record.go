@@ -23,9 +23,10 @@ const (
 )
 
 const (
-	headerSize          = 8 // CRC32 + PayloadLength
-	fixedPayloadSize    = 17
-	minRecordBufferSize = 4 * 1024 // 恢复小记录时仍从 4 KiB 池开始复用。
+	headerSize           = 8 // CRC32 + PayloadLength
+	fixedPayloadSize     = 17
+	maxRecordPayloadSize = 64 << 20
+	minRecordBufferSize  = 4 * 1024 // 恢复小记录时仍从 4 KiB 池开始复用。
 )
 
 var (
@@ -88,6 +89,9 @@ func (r *Record) Encode() ([]byte, error) {
 	}
 
 	payloadLength := fixedPayloadSize + len(r.Key) + len(r.Value)
+	if payloadLength > maxRecordPayloadSize {
+		return nil, ErrRecordTooLarge
+	}
 
 	payload := make([]byte, payloadLength)
 
@@ -227,8 +231,7 @@ func ReadRecord(r io.Reader) (*Record, error) {
 	}
 
 	payloadLength := binary.LittleEndian.Uint32(header[4:8])
-	const maxRecordSize = 64 << 20 // 64 MiB
-	if payloadLength > maxRecordSize {
+	if payloadLength > maxRecordPayloadSize {
 		return nil, ErrRecordTooLarge
 	}
 
@@ -240,4 +243,30 @@ func ReadRecord(r io.Reader) (*Record, error) {
 		return nil, err
 	}
 	return Decode(data)
+}
+
+// encodedRecordEnds 返回 data 中每条完整 record 结束位置。
+// 它只检查帧边界和最大长度，不重复计算 checksum；false 表示 AppendLog 传入了旧式原始字节。
+func encodedRecordEnds(data []byte) ([]int, bool) {
+	if len(data) == 0 {
+		return nil, true
+	}
+	ends := make([]int, 0, 1)
+	offset := 0
+	for offset < len(data) {
+		if len(data)-offset < headerSize {
+			return nil, false
+		}
+		payloadLength := binary.LittleEndian.Uint32(data[offset+4 : offset+8])
+		if payloadLength > maxRecordPayloadSize {
+			return nil, false
+		}
+		frameLength := headerSize + int(payloadLength)
+		if frameLength > len(data)-offset {
+			return nil, false
+		}
+		offset += frameLength
+		ends = append(ends, offset)
+	}
+	return ends, true
 }

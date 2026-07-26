@@ -4,6 +4,7 @@ package wal
 // writeMu 串行化文件写入，bufmu 只保护内存状态，两把锁按 writeMu -> bufmu 的顺序获取。
 
 import (
+	"errors"
 	"log"
 	"os"
 	"sync"
@@ -81,7 +82,7 @@ func NewWithOptions(dir string, options Options) (*WalManger, error) {
 		options:      options,
 		buffer:       make([]byte, 0, options.BufferSize),
 		flushBatch:   make([]byte, 0, options.BufferSize),
-		activeWriter: &WalWriter{file: file, segment: active},
+		activeWriter: &WalWriter{file: file, segment: active, records: countSegmentRecords(active.Path)},
 		done:         make(chan struct{}),
 	}
 	wm.backgroundWG.Add(1)
@@ -222,17 +223,145 @@ func (wm *WalManger) flushBufferLocked() error {
 }
 
 func (wm *WalManger) writeAndSyncLocked(data []byte) error {
+	ends, framed := encodedRecordEnds(data)
+	if !framed {
+		if wm.shouldRotateLocked(int64(len(data)), 0) {
+			if err := wm.rotateActiveLocked(); err != nil {
+				return err
+			}
+		}
+		if err := wm.writeDataLocked(data); err != nil {
+			return err
+		}
+		return wm.activeWriter.file.Sync()
+	}
+
+	chunkStart := 0
+	chunkBytes := int64(0)
+	var chunkRecords uint64
+	flushChunk := func(end int) error {
+		if end == chunkStart {
+			return nil
+		}
+		if err := wm.writeDataLocked(data[chunkStart:end]); err != nil {
+			return err
+		}
+		wm.activeWriter.records += chunkRecords
+		chunkStart = end
+		chunkBytes = 0
+		chunkRecords = 0
+		return nil
+	}
+
+	previousEnd := 0
+	for _, end := range ends {
+		frameBytes := int64(end - previousEnd)
+		projectedSize := wm.activeWriter.segment.Size + chunkBytes
+		projectedRecords := wm.activeWriter.records + chunkRecords
+		if shouldRotateSegment(
+			projectedSize,
+			projectedRecords,
+			frameBytes,
+			1,
+			wm.options,
+		) {
+			if err := flushChunk(previousEnd); err != nil {
+				return err
+			}
+			if err := wm.rotateActiveLocked(); err != nil {
+				return err
+			}
+		}
+		chunkBytes += frameBytes
+		chunkRecords++
+		previousEnd = end
+	}
+	if err := flushChunk(len(data)); err != nil {
+		return err
+	}
+	return wm.activeWriter.file.Sync()
+}
+
+func (wm *WalManger) writeDataLocked(data []byte) error {
 	for len(data) > 0 {
 		n, err := wm.activeWriter.file.Write(data)
+		if n > 0 {
+			wm.activeWriter.segment.Size += int64(n)
+			data = data[n:]
+		}
 		if err != nil {
 			return err
 		}
 		if n == 0 {
 			return os.ErrInvalid
 		}
-		data = data[n:]
 	}
-	return wm.activeWriter.file.Sync()
+	return nil
+}
+
+func (wm *WalManger) shouldRotateLocked(bytes int64, records uint64) bool {
+	return shouldRotateSegment(
+		wm.activeWriter.segment.Size,
+		wm.activeWriter.records,
+		bytes,
+		records,
+		wm.options,
+	)
+}
+
+func shouldRotateSegment(size int64, records uint64, nextBytes int64, nextRecords uint64, options Options) bool {
+	if size == 0 {
+		return false
+	}
+	if size+nextBytes > options.SegmentSize {
+		return true
+	}
+	return options.SegmentMaxRecords > 0 && nextRecords > 0 &&
+		records+nextRecords > options.SegmentMaxRecords
+}
+
+func (wm *WalManger) rotateActiveLocked() error {
+	if err := wm.activeWriter.file.Sync(); err != nil {
+		return err
+	}
+	oldPath := wm.activeWriter.segment.Path
+	if err := wm.activeWriter.file.Close(); err != nil {
+		return err
+	}
+
+	nextID := wm.activeWriter.segment.ID + 1
+	nextPath := SegmentPath(wm.Dir, nextID)
+	file, err := os.OpenFile(nextPath, os.O_APPEND|os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		reopenErr := wm.reopenActiveWriter(oldPath)
+		return errors.Join(err, reopenErr)
+	}
+	wm.activeWriter = &WalWriter{
+		file:    file,
+		segment: Segment{ID: nextID, Path: nextPath},
+	}
+	return nil
+}
+
+// Rotate 刷出当前缓冲并封存活动 segment，返回已封存的最大 ID。
+// 空 segment 不会继续制造空文件；调用方只能在成功发布对应状态后删除返回 ID 之前的段。
+func (wm *WalManger) Rotate() (uint64, error) {
+	wm.writeMu.Lock()
+	defer wm.writeMu.Unlock()
+	if err := wm.flushBufferLocked(); err != nil {
+		return 0, err
+	}
+	if wm.activeWriter.segment.Size == 0 {
+		if wm.activeWriter.segment.ID == 1 {
+			return 0, nil
+		}
+		return wm.activeWriter.segment.ID - 1, nil
+	}
+	sealedID := wm.activeWriter.segment.ID
+	if err := wm.rotateActiveLocked(); err != nil {
+		return 0, err
+	}
+	return sealedID, nil
 }
 
 // Background 定时把 WAL 缓冲同步到磁盘。

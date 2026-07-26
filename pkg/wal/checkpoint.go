@@ -37,6 +37,8 @@ func (wm *WalManger) Reset() error {
 		return err
 	}
 	wm.activeWriter.file = file
+	wm.activeWriter.segment.Size = 0
+	wm.activeWriter.records = 0
 	return file.Sync()
 }
 
@@ -118,6 +120,7 @@ func (wm *WalManger) reopenActiveWriter(path string) error {
 	}
 	wm.activeWriter.file = file
 	wm.activeWriter.segment = Segment{ID: id, Path: path, Size: info.Size()}
+	wm.activeWriter.records = countSegmentRecords(path)
 	return nil
 }
 
