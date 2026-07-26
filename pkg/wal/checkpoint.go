@@ -1,14 +1,20 @@
 package wal
 
-// 本文件实现显式 Flush、Checkpoint 后的 WAL 重写以及幂等关闭。
-// Replace/Reset 与追加共享 writeMu，因此不会发布只写了一半的新日志文件。
+// 本文件实现显式 Flush、世代式 Replace、已封存 segment 回收以及幂等关闭。
+// Replace/PruneThrough 与追加共享 writeMu；新 segment 同步并发布后才允许删除旧段。
 
 import (
 	"errors"
 	"os"
+	"path/filepath"
 )
 
-// Flush 将当前 WAL 内存 buffer 同步刷到 wal.log。
+var (
+	// ErrInvalidPrune 表示调用方试图删除当前活动 segment 或更高编号。
+	ErrInvalidPrune = errors.New("wal: prune boundary reaches active segment")
+)
+
+// Flush 将当前 WAL 内存 buffer 同步刷到活动 segment。
 // Checkpoint 前必须先 Flush，避免仍在内存中的 WAL 记录丢失。
 // 空缓冲返回 nil；此前记录已经在对应写入路径完成 Sync。
 func (wm *WalManger) Flush() error {
@@ -17,53 +23,37 @@ func (wm *WalManger) Flush() error {
 	return wm.flushBufferLocked()
 }
 
-// Reset 清空当前活动 segment，并重新打开一个可继续追加的新文件。
-// Windows 的追加句柄不能直接 Truncate，因此必须在 writeMu 保护下关闭后重建。
-// 只有上层确认全部 WAL 状态已进入 SSTable 后才能调用，否则会永久丢失恢复信息。
+// Reset 发布一个新的空 segment，再删除所有旧 segment。
+// 只有上层确认全部旧 WAL 状态已进入 SSTable/Manifest 后才能调用，否则会永久丢失恢复信息。
 func (wm *WalManger) Reset() error {
-	wm.writeMu.Lock()
-	defer wm.writeMu.Unlock()
-
-	if err := wm.flushBufferLocked(); err != nil {
-		return err
-	}
-	if err := wm.activeWriter.file.Close(); err != nil {
-		return err
-	}
-
-	path := wm.activeWriter.segment.Path
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return err
-	}
-	wm.activeWriter.file = file
-	wm.activeWriter.segment.Size = 0
-	wm.activeWriter.records = 0
-	return file.Sync()
+	return wm.Replace(nil)
 }
 
-// Replace 用 data 原子替换当前活动 segment 的持久化内容。
-// Store 在刷出 Immutable MemTable 后用它保留仍在内存中的记录，避免 WAL 无限增长。
-// data 必须是零条或多条完整编码记录；函数不验证内容，传入任意字节会使之后恢复失败。
+// Replace 把 data 写入更高 ID 的新 segment，Sync 并 Rename 发布后才切换活动句柄和删除旧段。
+// data 必须是零条或多条完整编码 record；崩溃发生在发布前会保留旧段，发布后但回收前会保留新旧两组。
+// Store 的新 Checkpoint 路径使用 Rotate+PruneThrough；Replace 仅保留给兼容调用方。
 func (wm *WalManger) Replace(data []byte) error {
+	if _, framed := encodedRecordEnds(data); !framed {
+		return ErrInvalidRecord
+	}
+
 	wm.writeMu.Lock()
 	defer wm.writeMu.Unlock()
-
 	if err := wm.flushBufferLocked(); err != nil {
 		return err
 	}
 
-	targetPath := wm.activeWriter.segment.Path
-	tmpPath := targetPath + ".tmp"
-	backupPath := targetPath + ".bak"
-	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	nextID := wm.activeWriter.segment.ID + 1
+	targetPath := SegmentPath(wm.Dir, nextID)
+	tmp, err := os.CreateTemp(wm.Dir, "."+filepath.Base(targetPath)+".tmp-")
 	if err != nil {
 		return err
 	}
-	tmpOK := false
+	tmpPath := tmp.Name()
+	published := false
 	defer func() {
 		_ = tmp.Close()
-		if !tmpOK {
+		if !published {
 			_ = os.Remove(tmpPath)
 		}
 	}()
@@ -77,30 +67,70 @@ func (wm *WalManger) Replace(data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := wm.activeWriter.file.Close(); err != nil {
+	if err := os.Rename(tmpPath, targetPath); err != nil {
+		return err
+	}
+	published = true
+	if err := syncWALDirectory(wm.Dir); err != nil {
 		return err
 	}
 
-	publishErr := os.Rename(tmpPath, targetPath)
-	if publishErr != nil {
-		_ = os.Remove(backupPath)
-		if err := os.Rename(targetPath, backupPath); err != nil {
-			_ = wm.reopenActiveWriter(targetPath)
-			return errors.Join(publishErr, err)
-		}
-		if err := os.Rename(tmpPath, targetPath); err != nil {
-			_ = os.Rename(backupPath, targetPath)
-			_ = wm.reopenActiveWriter(targetPath)
-			return err
-		}
-	}
-	tmpOK = true
-
-	if err := wm.reopenActiveWriter(targetPath); err != nil {
+	nextFile, err := os.OpenFile(targetPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
 		return err
 	}
-	_ = os.Remove(backupPath)
-	return nil
+	oldFile := wm.activeWriter.file
+	wm.activeWriter = &WalWriter{
+		file: nextFile,
+		segment: Segment{
+			ID:   nextID,
+			Path: targetPath,
+			Size: int64(len(data)),
+		},
+	}
+	wm.activeWriter.records = countSegmentRecords(targetPath)
+
+	closeErr := oldFile.Close()
+	_, pruneErr := wm.pruneThroughLocked(nextID - 1)
+	return errors.Join(closeErr, pruneErr)
+}
+
+// PruneThrough 删除 ID <= maxID 的已封存 segment。
+// 调用方必须先持久化引用这些记录的 Manifest；重复调用会忽略已经不存在的旧段。
+func (wm *WalManger) PruneThrough(maxID uint64) (int, error) {
+	wm.writeMu.Lock()
+	defer wm.writeMu.Unlock()
+	return wm.pruneThroughLocked(maxID)
+}
+
+func (wm *WalManger) pruneThroughLocked(maxID uint64) (int, error) {
+	if maxID == 0 {
+		return 0, nil
+	}
+	if maxID >= wm.activeWriter.segment.ID {
+		return 0, ErrInvalidPrune
+	}
+	segments, err := ListSegments(wm.Dir)
+	if err != nil {
+		return 0, err
+	}
+
+	removed := 0
+	var removeErr error
+	for _, segment := range segments {
+		if segment.ID > maxID {
+			break
+		}
+		if err := os.Remove(segment.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			removeErr = errors.Join(removeErr, err)
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		removeErr = errors.Join(removeErr, syncWALDirectory(wm.Dir))
+	}
+	return removed, removeErr
 }
 
 func (wm *WalManger) reopenActiveWriter(path string) error {
@@ -127,13 +157,15 @@ func (wm *WalManger) reopenActiveWriter(path string) error {
 func writeFileData(file *os.File, data []byte) error {
 	for len(data) > 0 {
 		n, err := file.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
 		if err != nil {
 			return err
 		}
 		if n == 0 {
 			return os.ErrInvalid
 		}
-		data = data[n:]
 	}
 	return nil
 }
