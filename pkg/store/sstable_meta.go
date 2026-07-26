@@ -1,11 +1,12 @@
 package store
 
-// 本文件从结构化复合 Key 构建时间范围、标签 Bloom Filter 和标签基数元数据。
+// 本文件构建并编解码 MetaBlock，包括 key/时间范围、主 Bloom Filter、标签 Bloom Filter 和标签基数。
 // 普通 KV key 解码失败时仍可进入 SSTable，只是不参与时间与标签索引统计。
 
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"sort"
 
 	"github.com/23jdd/SamKv/pkg/utils"
@@ -222,4 +223,108 @@ func decodeMetaExtension(data []byte, meta *MetaBlock) error {
 		return ErrInvalidSSTable
 	}
 	return nil
+}
+
+// encodeMetaBlock 把内存元数据编码为稳定的小端序格式。
+// Filter 为 nil 时拒绝写入，避免生成点查必然失效的表。
+func encodeMetaBlock(meta MetaBlock) ([]byte, error) {
+	if meta.Filter == nil {
+		return nil, errors.New("sstable: missing bloom filter")
+	}
+	filterData, err := meta.Filter.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	extensionData, err := encodeMetaExtension(meta)
+	if err != nil {
+		return nil, err
+	}
+
+	minKey := []byte(meta.MinKey)
+	maxKey := []byte(meta.MaxKey)
+	var buf bytes.Buffer
+	if err := writeUint64(&buf, meta.RecordCount); err != nil {
+		return nil, err
+	}
+	if err := writeUint32(&buf, uint32(len(minKey))); err != nil {
+		return nil, err
+	}
+	if err := writeUint32(&buf, uint32(len(maxKey))); err != nil {
+		return nil, err
+	}
+	if err := writeUint32(&buf, uint32(len(filterData))); err != nil {
+		return nil, err
+	}
+	if err := writeUint32(&buf, uint32(len(extensionData))); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write(minKey); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write(maxKey); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write(filterData); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write(extensionData); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// decodeMetaBlock 解码 MetaBlock，并恢复 BloomFilter。
+func decodeMetaBlock(data []byte) (MetaBlock, error) {
+	if len(data) < 24 {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
+	offset := 0
+	recordCount := binary.LittleEndian.Uint64(data[offset:])
+	offset += 8
+	minKeyLen := int(binary.LittleEndian.Uint32(data[offset:]))
+	offset += 4
+	maxKeyLen := int(binary.LittleEndian.Uint32(data[offset:]))
+	offset += 4
+	filterLen := int(binary.LittleEndian.Uint32(data[offset:]))
+	offset += 4
+	extensionLen := int(binary.LittleEndian.Uint32(data[offset:]))
+	offset += 4
+
+	if minKeyLen < 0 || maxKeyLen < 0 || filterLen < 0 || extensionLen < 0 {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
+	if minKeyLen > len(data)-offset {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
+	minKey := string(data[offset : offset+minKeyLen])
+	offset += minKeyLen
+	if maxKeyLen > len(data)-offset {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
+	maxKey := string(data[offset : offset+maxKeyLen])
+	offset += maxKeyLen
+	if filterLen > len(data)-offset {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
+
+	var filter BloomFilter
+	if err := filter.UnmarshalBinary(data[offset : offset+filterLen]); err != nil {
+		return MetaBlock{}, err
+	}
+	offset += filterLen
+	if extensionLen > len(data)-offset {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
+
+	meta := MetaBlock{RecordCount: recordCount, MinKey: minKey, MaxKey: maxKey, Filter: &filter}
+	if extensionLen > 0 {
+		if err := decodeMetaExtension(data[offset:offset+extensionLen], &meta); err != nil {
+			return MetaBlock{}, err
+		}
+	}
+	offset += extensionLen
+	if offset != len(data) {
+		return MetaBlock{}, ErrInvalidSSTable
+	}
+	return meta, nil
 }
