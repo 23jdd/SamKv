@@ -1,8 +1,11 @@
 package store
 
 import (
+	"errors"
 	"reflect"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestPlanCompactionRangesUsesSortedUniqueBoundaries(t *testing.T) {
@@ -49,5 +52,95 @@ func TestPlanCompactionRangesIgnoresUnselectedTables(t *testing.T) {
 	want := []compactionRange{{endKey: "y"}, {startKey: "y"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("planCompactionRanges() = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunCompactionRangesStartsTasksInParallel(t *testing.T) {
+	ranges := []compactionRange{{endKey: "b"}, {startKey: "b", endKey: "c"}, {startKey: "c"}}
+	started := make(chan struct{}, len(ranges))
+	release := make(chan struct{})
+	var active atomic.Int32
+	var peak atomic.Int32
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := runCompactionRanges(ranges, func(keyRange compactionRange) (compactionTaskResult, error) {
+			current := active.Add(1)
+			for {
+				oldPeak := peak.Load()
+				if current <= oldPeak || peak.CompareAndSwap(oldPeak, current) {
+					break
+				}
+			}
+			started <- struct{}{}
+			<-release
+			active.Add(-1)
+			return compactionTaskResult{keyRange: keyRange}, nil
+		})
+		done <- err
+	}()
+
+	for range ranges {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("compaction tasks did not start concurrently")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := peak.Load(); got != int32(len(ranges)) {
+		t.Fatalf("peak parallel tasks = %d, want %d", got, len(ranges))
+	}
+}
+
+func TestRunCompactionTasksPreservesNewestRecordAcrossRanges(t *testing.T) {
+	oldTable, err := NewSStable([]Record{{Key: "a", Val: "old-a"}, {Key: "z", Val: "old-z"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTable, err := NewSStable([]Record{{Key: "a", Val: "new-a"}, {Key: "m", Val: "new-m"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranges := []compactionRange{{endKey: "m"}, {startKey: "m"}}
+	results, err := runCompactionTasks(
+		[]*SStable{oldTable, newTable},
+		[]int{0, 1},
+		ranges,
+		false,
+		DefaultOptions(),
+		time.Now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].inputRecords != 2 || results[1].inputRecords != 2 {
+		t.Fatalf("task results = %#v", results)
+	}
+	want := [][]Record{
+		{{Key: "a", Val: "new-a"}},
+		{{Key: "m", Val: "new-m"}, {Key: "z", Val: "old-z"}},
+	}
+	for index := range want {
+		if !reflect.DeepEqual(results[index].records, want[index]) {
+			t.Fatalf("task %d records = %#v, want %#v", index, results[index].records, want[index])
+		}
+	}
+}
+
+func TestRunCompactionTasksRejectsInvalidInputTable(t *testing.T) {
+	_, err := runCompactionTasks(
+		[]*SStable{nil},
+		[]int{0},
+		[]compactionRange{{}},
+		false,
+		DefaultOptions(),
+		time.Now,
+	)
+	if !errors.Is(err, ErrInvalidSSTable) {
+		t.Fatalf("runCompactionTasks() error = %v, want %v", err, ErrInvalidSSTable)
 	}
 }
