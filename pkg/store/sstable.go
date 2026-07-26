@@ -5,6 +5,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -145,6 +146,15 @@ func NewSStable(rs []Record) (*SStable, error) {
 // 输入会复制、排序和按 key 去重；空输入会生成合法空表。path 应是未使用的唯一文件名，
 // 函数先写 path.tmp、Sync 后 Rename，成功返回的对象可读取且 Close 可安全调用。
 func WriteSStable(path string, rs []Record) (*SStable, error) {
+	return writeSStable(path, rs, nil)
+}
+
+// writeSStableWithLimiter 仅供后台 Compaction 使用；多个调用可共享同一 limiter 控制聚合带宽。
+func writeSStableWithLimiter(path string, rs []Record, limiter byteRateLimiter) (*SStable, error) {
+	return writeSStable(path, rs, limiter)
+}
+
+func writeSStable(path string, rs []Record, limiter byteRateLimiter) (*SStable, error) {
 	records := normalizeRecords(rs)
 	bf, err := buildBloomFilter(records)
 	if err != nil {
@@ -159,6 +169,7 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 	if err != nil {
 		return nil, err
 	}
+	writer := newRateLimitedWriter(context.Background(), file, limiter)
 
 	ok := false
 	defer func() {
@@ -176,7 +187,7 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 			return nil, err
 		}
 		encodedBlock := encodeChecksummedBlock(blockData)
-		if err := writeAll(file, encodedBlock); err != nil {
+		if err := writeAll(writer, encodedBlock); err != nil {
 			return nil, err
 		}
 		index = append(index, IndexEntry{
@@ -200,7 +211,7 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 	}
 	encodedMeta := encodeChecksummedBlock(metaData)
 	metaHandle := BlockHandle{Offset: offset, Size: uint64(len(encodedMeta))}
-	if err := writeAll(file, encodedMeta); err != nil {
+	if err := writeAll(writer, encodedMeta); err != nil {
 		return nil, err
 	}
 	offset += uint64(len(encodedMeta))
@@ -211,7 +222,7 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 	}
 	encodedIndex := encodeChecksummedBlock(indexData)
 	indexHandle := BlockHandle{Offset: offset, Size: uint64(len(encodedIndex))}
-	if err := writeAll(file, encodedIndex); err != nil {
+	if err := writeAll(writer, encodedIndex); err != nil {
 		return nil, err
 	}
 	offset += uint64(len(encodedIndex))
@@ -222,7 +233,7 @@ func WriteSStable(path string, rs []Record) (*SStable, error) {
 		IndexHandle: indexHandle,
 	}
 	footerData := encodeFooter(footer)
-	if err := writeAll(file, footerData); err != nil {
+	if err := writeAll(writer, footerData); err != nil {
 		return nil, err
 	}
 	if err := file.Sync(); err != nil {

@@ -27,13 +27,14 @@ type StoreManger struct {
 	mu            sync.RWMutex
 	maintenanceMu sync.Mutex
 
-	dir        string
-	dirLock    *directoryLock
-	mem        *MemTable
-	immutables []*MemTable
-	wm         *wal.WalManger
-	options    Options
-	blockCache *BlockCache
+	dir               string
+	dirLock           *directoryLock
+	mem               *MemTable
+	immutables        []*MemTable
+	wm                *wal.WalManger
+	options           Options
+	blockCache        *BlockCache
+	compactionLimiter byteRateLimiter
 
 	sstables       []*SStable
 	nextSSTableID  uint64
@@ -92,18 +93,19 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 	}
 
 	st := &StoreManger{
-		dir:           dir,
-		dirLock:       dirLock,
-		mem:           NewMemTable(options.MemTableLimit),
-		wm:            wm,
-		options:       options,
-		blockCache:    NewBlockCache(options.BlockCacheBytes),
-		nextSSTableID: 1,
-		manifest:      newManifest(),
-		flushCh:       make(chan struct{}, 1),
-		compactionCh:  make(chan struct{}, 1),
-		done:          make(chan struct{}),
-		now:           time.Now,
+		dir:               dir,
+		dirLock:           dirLock,
+		mem:               NewMemTable(options.MemTableLimit),
+		wm:                wm,
+		options:           options,
+		blockCache:        NewBlockCache(options.BlockCacheBytes),
+		compactionLimiter: newCompactionRateLimiter(options.CompactionRateLimitBytesPerSec),
+		nextSSTableID:     1,
+		manifest:          newManifest(),
+		flushCh:           make(chan struct{}, 1),
+		compactionCh:      make(chan struct{}, 1),
+		done:              make(chan struct{}),
+		now:               time.Now,
 	}
 	if err := st.loadSSTables(); err != nil {
 		st.closeSSTablesLocked()

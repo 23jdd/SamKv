@@ -190,7 +190,20 @@ func writeCompactionOutputs(
 	results []compactionTaskResult,
 	cache *BlockCache,
 ) ([]compactionOutput, error) {
-	return writeCompactionOutputsWithWriter(dir, firstFileID, results, cache, WriteSStable)
+	return writeCompactionOutputsWithLimiter(dir, firstFileID, results, cache, nil)
+}
+
+func writeCompactionOutputsWithLimiter(
+	dir string,
+	firstFileID uint64,
+	results []compactionTaskResult,
+	cache *BlockCache,
+	limiter byteRateLimiter,
+) ([]compactionOutput, error) {
+	write := func(path string, records []Record) (*SStable, error) {
+		return writeSStableWithLimiter(path, records, limiter)
+	}
+	return writeCompactionOutputsWithWriter(dir, firstFileID, results, cache, write)
 }
 
 func writeCompactionOutputsWithWriter(

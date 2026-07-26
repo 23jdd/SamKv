@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -79,5 +80,51 @@ func TestRateLimitedWriterDoesNotChargeShortWritesTwice(t *testing.T) {
 	}
 	if !reflect.DeepEqual(limiter.calls, []int{3, 1}) {
 		t.Fatalf("limiter calls = %v, want [3 1]", limiter.calls)
+	}
+}
+
+func TestCompactRoutesSSTableWritesThroughSharedLimiter(t *testing.T) {
+	options := DefaultOptions()
+	options.AutoCheckpoint = false
+	options.CompactionThreshold = 0
+	options.CompactionRateLimitBytesPerSec = 0
+	database, err := NewStoreManagerWithOptions(t.TempDir(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	if err := database.Put("a", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Put("b", "second"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+
+	limiter := &recordingLimiter{burst: 64}
+	database.compactionLimiter = limiter
+	result, err := database.Compact()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.OutputTables != 1 || len(limiter.calls) == 0 {
+		t.Fatalf("Compact() result = %#v, limiter calls = %v", result, limiter.calls)
+	}
+	total := 0
+	for _, count := range limiter.calls {
+		total += count
+	}
+	info, err := os.Stat(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(total) != info.Size() {
+		t.Fatalf("limited bytes = %d, SSTable size = %d", total, info.Size())
 	}
 }

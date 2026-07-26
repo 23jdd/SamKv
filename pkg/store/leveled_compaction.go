@@ -85,7 +85,7 @@ func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 	st.mu.RLock()
 	firstFileID := st.nextSSTableID
 	st.mu.RUnlock()
-	outputs, err := writeCompactionOutputs(st.dir, firstFileID, taskResults, st.blockCache)
+	outputs, err := writeCompactionOutputsWithLimiter(st.dir, firstFileID, taskResults, st.blockCache, st.compactionLimiter)
 	if err != nil {
 		return result, err
 	}

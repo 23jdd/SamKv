@@ -109,7 +109,7 @@ func (st *StoreManger) compactAll(forceRewrite bool) (CompactionResult, error) {
 		st.mu.RUnlock()
 
 		var err error
-		newTable, err = WriteSStable(path, records)
+		newTable, err = writeSStableWithLimiter(path, records, st.compactionLimiter)
 		if err != nil {
 			return result, err
 		}
