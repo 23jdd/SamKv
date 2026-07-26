@@ -1,5 +1,8 @@
 package tcp
 
+// 本文件覆盖最小桶选择、非法配置 panic、配置副本和外来容量丢弃等边界。
+// 测试不要求 sync.Pool 稳定复用对象，因为运行时可以在任意 GC 周期清空池。
+
 import "testing"
 
 func TestTieredPoolChoosesSmallestCapacity(t *testing.T) {
