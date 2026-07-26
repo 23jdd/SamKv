@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证并行 Compaction 的范围规划、任务失败传播、全局容量淘汰和输出文件清理。
+
 import (
 	"errors"
 	"os"

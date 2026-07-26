@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证全量 Compaction 的版本覆盖、墓碑回收、保留策略、原子发布和错误清理边界。
+
 import (
 	"errors"
 	"os"

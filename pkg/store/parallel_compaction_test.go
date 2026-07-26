@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证重启后 SSTable 的并行扫描、输出范围和统计数据在真实文件上的一致性。
+
 import (
 	"fmt"
 	"strings"

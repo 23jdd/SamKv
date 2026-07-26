@@ -1,5 +1,7 @@
 package store
 
+// 本文件验证分层选择策略、层容量触发、Manifest 更新以及墓碑只在末层回收的规则。
+
 import (
 	"path/filepath"
 	"testing"

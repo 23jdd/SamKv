@@ -1,5 +1,7 @@
 package store
 
+// 本文件把一次分层 Compaction 拆成互不重叠的 key 范围，并并行完成读取、归并和 SSTable 写入。
+
 import (
 	"errors"
 	"sort"
@@ -94,6 +96,7 @@ func compactionWorkerCount(tables []*SStable, indexes []int, maximum int, taskBy
 
 // runCompactionTasks 并行扫描每个 key 区间，并在区间内保留最新版本。
 // 每个任务写入独立结果槽，因此返回顺序始终与 ranges 一致。
+// 只有目标是最底层时才删除墓碑并执行 Retention/MaxSizeBytes；上层必须保留墓碑，防止旧值复活。
 func runCompactionTasks(
 	tables []*SStable,
 	indexes []int,
@@ -148,6 +151,7 @@ func runCompactionRanges(
 	ranges []compactionRange,
 	run func(compactionRange) (compactionTaskResult, error),
 ) ([]compactionTaskResult, error) {
+	// ranges 由 planCompactionRanges 保证互不重叠；调用方不能传入相交范围。
 	results := make([]compactionTaskResult, len(ranges))
 	errs := make([]error, len(ranges))
 	var waitGroup sync.WaitGroup
@@ -179,6 +183,7 @@ func applyGlobalSizeRetention(results []compactionTaskResult, maxSizeBytes int64
 
 // writeCompactionOutputs 为每个非空范围并行生成一张 SSTable。
 // 只有全部文件都写成功，调用方才可以把这些输出发布到 Manifest。
+// 任一写入失败时会关闭并删除本次已成功创建的文件，但不会删除 table=nil 对应的已有路径。
 func writeCompactionOutputs(
 	dir string,
 	firstFileID uint64,

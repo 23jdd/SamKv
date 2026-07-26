@@ -1,5 +1,8 @@
 package store
 
+// 本文件实现 L0 到末层的增量 Compaction 选择、发布和旧文件回收。
+// 顶层 maintenanceMu 会串行化 Checkpoint/Compaction，而选定 key 范围内部可以并行执行。
+
 import (
 	"errors"
 	"math"
@@ -18,6 +21,7 @@ type levelCompactionSelection struct {
 }
 
 // CompactNextLevel 执行当前最需要整理的一层增量 Compaction。
+// L0 文件数达到 CompactionThreshold 时优先整理 L0，否则选择首个超过容量上限的非零层；无任务时返回零值结果。
 func (st *StoreManger) CompactNextLevel() (CompactionResult, error) {
 	st.mu.RLock()
 	level := st.nextCompactionLevelLocked()
@@ -29,6 +33,8 @@ func (st *StoreManger) CompactNextLevel() (CompactionResult, error) {
 }
 
 // CompactLevel 合并 source level 的候选文件及下一层中 key 范围重叠的 SSTable。
+// L0 会选择全部文件，非零层每次只选择一个源文件；level 必须位于 [0, MaxLevels-1)。
+// 所有并行输出成功后才原子保存 Manifest，因此失败不会暴露半组结果。
 func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 	st.maintenanceMu.Lock()
 	defer st.maintenanceMu.Unlock()
@@ -164,6 +170,7 @@ func (st *StoreManger) CompactLevel(level int) (CompactionResult, error) {
 	}
 	return result, cleanupErr
 }
+
 func selectLevelCompaction(manifest Manifest, sourceLevel int) levelCompactionSelection {
 	selection := levelCompactionSelection{sourceLevel: sourceLevel, targetLevel: sourceLevel + 1}
 	minKey, maxKey := "", ""
@@ -200,6 +207,7 @@ func rangesOverlapInclusive(firstMin, firstMax, secondMin, secondMax string) boo
 }
 
 func compactLevelRecords(latest map[string]Record, bottomLevel bool, options Options, now func() time.Time) []Record {
+	// 非底层必须把墓碑继续向下传递，否则更低层中的旧值会在墓碑被提前删除后重新出现。
 	keys := make([]string, 0, len(latest))
 	for key := range latest {
 		keys = append(keys, key)

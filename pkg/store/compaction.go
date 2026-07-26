@@ -1,5 +1,8 @@
 package store
 
+// 本文件实现跨全部层级的全量 Compaction，并负责按保留时间和容量淘汰结构化日志。
+// 常规写入路径应优先使用 CompactLevel；Compact 会读取所有 SSTable，适合手动维护、升级或彻底回收墓碑。
+
 import (
 	"errors"
 	"os"
@@ -10,20 +13,21 @@ import (
 
 // CompactionResult 描述一次全量或分层 Compaction 的输入、输出和清理数量。
 type CompactionResult struct {
-	Path           string
-	Paths          []string
-	SourceLevel    int
-	TargetLevel    int
-	InputTables    int
-	OutputTables   int
-	Subtasks       int
-	InputRecords   int
-	OutputRecords  int
-	DroppedRecords int
+	Path           string   // Path 是第一个输出文件，供只支持单输出的旧调用方兼容使用。
+	Paths          []string // Paths 包含本次生成的全部 SSTable；结果全部被淘汰时为空。
+	SourceLevel    int      // SourceLevel 为源层级；全量 Compact 使用 -1。
+	TargetLevel    int      // TargetLevel 为输出层级。
+	InputTables    int      // InputTables 是参与合并的 SSTable 数量。
+	OutputTables   int      // OutputTables 是成功发布到 Manifest 的新文件数量。
+	Subtasks       int      // Subtasks 是并行 key 范围数量；全量 Compact 固定为 1。
+	InputRecords   int      // InputRecords 是所有输入记录数，包含旧版本和墓碑。
+	OutputRecords  int      // OutputRecords 是去重、淘汰后的记录数。
+	DroppedRecords int      // DroppedRecords 等于 InputRecords-OutputRecords。
 }
 
 // Compact 合并当前所有 SSTable，只保留每个 key 的最新版本。
 // 因为输入覆盖了全部磁盘层，墓碑可安全删除；结构化日志还会应用时间和容量保留策略。
+// 边界条件：空库直接返回零输出；仅有一个表且未配置保留策略时不会重写文件。
 func (st *StoreManger) Compact() (CompactionResult, error) {
 	return st.compactAll(false)
 }
@@ -176,6 +180,8 @@ func (st *StoreManger) compactAll(forceRewrite bool) (CompactionResult, error) {
 	return result, cleanupErr
 }
 
+// enforceSizeRetention 只能根据 utils.EncodeKey 生成的结构化 key 判断新旧顺序。
+// 无法解码的普通 KV key 不会因 MaxSizeBytes 被淘汰，因此混合使用两种 key 时总大小可能暂时超过上限。
 func enforceSizeRetention(records []Record, maxSizeBytes int64) []Record {
 	if maxSizeBytes <= 0 || len(records) == 0 {
 		return records
