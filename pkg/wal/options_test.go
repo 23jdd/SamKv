@@ -6,7 +6,6 @@ package wal
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -59,7 +58,7 @@ func TestSyncEveryWritePersistsBeforeAppendReturns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	file, err := os.Open(filepath.Join(writer.Dir, "wal.log"))
+	file, err := os.Open(activeSegmentPath(t, writer.Dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +84,7 @@ func TestSyncIntervalDefersSmallWriteUntilFlush(t *testing.T) {
 	if err := writer.AppendRecord(PutRecord([]byte("buffered"), []byte("value"))); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(writer.Dir, "wal.log")
+	path := activeSegmentPath(t, writer.Dir)
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +131,7 @@ func TestSyncIntervalFlushesFullBufferWithoutWaitingForTicker(t *testing.T) {
 		t.Fatal("append waited for the periodic flush after the WAL buffer became full")
 	}
 
-	info, err := os.Stat(filepath.Join(writer.Dir, "wal.log"))
+	info, err := os.Stat(activeSegmentPath(t, writer.Dir))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/23jdd/SamKv/pkg/wal"
 )
@@ -49,7 +48,11 @@ func ExampleWalManger() {
 		panic(err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "wal.log"))
+	segments, err := wal.ListSegments(dir)
+	if err != nil || len(segments) != 1 {
+		panic("unexpected WAL segments")
+	}
+	data, err := os.ReadFile(segments[0].Path)
 	if err != nil {
 		panic(err)
 	}

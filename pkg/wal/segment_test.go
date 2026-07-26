@@ -3,6 +3,7 @@ package wal
 // 本文件验证 WAL segment 文件名是稳定、可排序且不会误接纳临时或近似命名文件。
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -57,5 +58,56 @@ func TestListSegmentsSortsAndIgnoresUnrelatedFiles(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ids, []uint64{2, 7, 9}) {
 		t.Fatalf("segment IDs = %v", ids)
+	}
+}
+
+func activeSegmentPath(t testing.TB, dir string) string {
+	t.Helper()
+	segments, err := ListSegments(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(segments) != 1 {
+		t.Fatalf("segment count = %d, want 1", len(segments))
+	}
+	return segments[0].Path
+}
+
+func TestNewMigratesLegacyWAL(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, legacyWALFile)
+	if err := os.WriteFile(legacy, []byte("legacy-data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy wal still exists: %v", err)
+	}
+	data, err := os.ReadFile(activeSegmentPath(t, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "legacy-data" {
+		t.Fatalf("migrated data = %q", data)
+	}
+}
+
+func TestNewRejectsMixedLegacyAndSegmentLayout(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, legacyWALFile), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(SegmentPath(dir, 1), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(dir); !errors.Is(err, ErrAmbiguousLayout) {
+		t.Fatalf("New() error = %v, want ErrAmbiguousLayout", err)
 	}
 }

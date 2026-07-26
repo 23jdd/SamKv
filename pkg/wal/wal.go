@@ -4,10 +4,8 @@ package wal
 // writeMu 串行化文件写入，bufmu 只保护内存状态，两把锁按 writeMu -> bufmu 的顺序获取。
 
 import (
-	"errors"
 	"log"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 )
@@ -22,7 +20,9 @@ const (
 // WalWriter 封装当前活动文件句柄。
 // 该类型由 WalManger 管理，调用方不应直接构造或关闭其内部文件。
 type WalWriter struct {
-	file *os.File
+	file    *os.File
+	segment Segment
+	records uint64
 }
 
 // WalManger 管理 WAL 的内存缓冲、顺序写入和后台刷盘。
@@ -41,13 +41,13 @@ type WalManger struct {
 	backgroundWG sync.WaitGroup
 }
 
-// New 使用默认选项打开或创建 wal.log。
+// New 使用默认选项打开或创建 WAL segment。
 func New(dir string) (*WalManger, error) {
 	return NewWithOptions(dir, DefaultOptions())
 }
 
-// NewWithOptions 打开或创建 wal.log，并按给定持久性策略启动后台任务。
-// dir 不存在时自动创建；选项无效或文件无法打开时不会启动后台 goroutine。
+// NewWithOptions 打开或创建最新 WAL segment，并按给定持久性策略启动后台任务。
+// dir 不存在时自动创建；只有旧 wal.log 时会迁移为 segment 1，同时存在新旧布局则拒绝打开。
 // 成功后调用方必须调用 Close，即使后续 AppendRecord 返回错误。
 func NewWithOptions(dir string, options Options) (*WalManger, error) {
 	if err := validateOptions(options); err != nil {
@@ -56,27 +56,44 @@ func NewWithOptions(dir string, options Options) (*WalManger, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, "wal.log")
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		// Windows 替换 WAL 时可能在崩溃点只留下备份文件。
-		_ = os.Rename(path+".bak", path)
-	}
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	segments, err := prepareSegments(dir)
 	if err != nil {
 		return nil, err
 	}
+
+	active := Segment{ID: 1, Path: SegmentPath(dir, 1)}
+	if len(segments) > 0 {
+		active = segments[len(segments)-1]
+	}
+	file, err := os.OpenFile(active.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	active.Size = info.Size()
 
 	wm := &WalManger{
 		Dir:          dir,
 		options:      options,
 		buffer:       make([]byte, 0, options.BufferSize),
 		flushBatch:   make([]byte, 0, options.BufferSize),
-		activeWriter: &WalWriter{file: file},
+		activeWriter: &WalWriter{file: file, segment: active},
 		done:         make(chan struct{}),
 	}
 	wm.backgroundWG.Add(1)
 	go wm.Background()
 	return wm, nil
+}
+
+// ActiveSegment 返回当前追加 segment 的快照。
+func (wm *WalManger) ActiveSegment() Segment {
+	wm.writeMu.Lock()
+	defer wm.writeMu.Unlock()
+	return wm.activeWriter.segment
 }
 
 // AppendLog 将已经编码的 WAL 数据追加到缓冲区。

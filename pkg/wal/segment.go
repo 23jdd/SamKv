@@ -4,6 +4,7 @@ package wal
 // 只有形如 wal-<20 位十进制 ID>.log 的文件会进入恢复顺序，其他文件一律忽略。
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,7 +17,12 @@ const (
 	segmentPrefix  = "wal-"
 	segmentSuffix  = ".log"
 	segmentIDWidth = 20
+
+	legacyWALFile = "wal.log"
 )
+
+// ErrAmbiguousLayout 表示目录同时存在旧 wal.log 和新 segment，无法可靠判断追加顺序。
+var ErrAmbiguousLayout = errors.New("wal: legacy and segmented WAL files coexist")
 
 // Segment 描述一个已经发布到 WAL 目录的 segment。
 // ID 决定恢复顺序，Path 是绝对或基于传入 dir 拼出的路径，Size 是枚举时的文件大小快照。
@@ -80,4 +86,41 @@ func ListSegments(dir string) ([]Segment, error) {
 		return segments[i].ID < segments[j].ID
 	})
 	return segments, nil
+}
+
+// prepareSegments 返回现有 segment；首次升级旧目录时把 wal.log 迁移为 segment 1。
+// os.Rename 在同一目录内发布文件，旧版 Replace 留下的 wal.log.bak 也可以恢复。
+func prepareSegments(dir string) ([]Segment, error) {
+	segments, err := ListSegments(dir)
+	if err != nil {
+		return nil, err
+	}
+	legacyPath := filepath.Join(dir, legacyWALFile)
+	legacyBackup := legacyPath + ".bak"
+	if len(segments) > 0 {
+		if fileExists(legacyPath) || fileExists(legacyBackup) {
+			return nil, ErrAmbiguousLayout
+		}
+		return segments, nil
+	}
+
+	if !fileExists(legacyPath) && fileExists(legacyBackup) {
+		if err := os.Rename(legacyBackup, legacyPath); err != nil {
+			return nil, err
+		}
+	}
+	if !fileExists(legacyPath) {
+		return nil, nil
+	}
+
+	target := SegmentPath(dir, 1)
+	if err := os.Rename(legacyPath, target); err != nil {
+		return nil, err
+	}
+	return ListSegments(dir)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

@@ -6,7 +6,6 @@ package wal
 import (
 	"errors"
 	"os"
-	"path/filepath"
 )
 
 // Flush 将当前 WAL 内存 buffer 同步刷到 wal.log。
@@ -18,7 +17,7 @@ func (wm *WalManger) Flush() error {
 	return wm.flushBufferLocked()
 }
 
-// Reset 清空当前 wal.log，并重新打开一个可继续追加的新文件。
+// Reset 清空当前活动 segment，并重新打开一个可继续追加的新文件。
 // Windows 的追加句柄不能直接 Truncate，因此必须在 writeMu 保护下关闭后重建。
 // 只有上层确认全部 WAL 状态已进入 SSTable 后才能调用，否则会永久丢失恢复信息。
 func (wm *WalManger) Reset() error {
@@ -32,7 +31,7 @@ func (wm *WalManger) Reset() error {
 		return err
 	}
 
-	path := filepath.Join(wm.Dir, "wal.log")
+	path := wm.activeWriter.segment.Path
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
@@ -41,7 +40,7 @@ func (wm *WalManger) Reset() error {
 	return file.Sync()
 }
 
-// Replace 用 data 原子替换 wal.log 的持久化内容。
+// Replace 用 data 原子替换当前活动 segment 的持久化内容。
 // Store 在刷出 Immutable MemTable 后用它保留仍在内存中的记录，避免 WAL 无限增长。
 // data 必须是零条或多条完整编码记录；函数不验证内容，传入任意字节会使之后恢复失败。
 func (wm *WalManger) Replace(data []byte) error {
@@ -52,7 +51,7 @@ func (wm *WalManger) Replace(data []byte) error {
 		return err
 	}
 
-	targetPath := filepath.Join(wm.Dir, "wal.log")
+	targetPath := wm.activeWriter.segment.Path
 	tmpPath := targetPath + ".tmp"
 	backupPath := targetPath + ".bak"
 	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
@@ -107,7 +106,18 @@ func (wm *WalManger) reopenActiveWriter(path string) error {
 	if err != nil {
 		return err
 	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return err
+	}
+	id, ok := ParseSegmentID(path)
+	if !ok {
+		_ = file.Close()
+		return ErrAmbiguousLayout
+	}
 	wm.activeWriter.file = file
+	wm.activeWriter.segment = Segment{ID: id, Path: path, Size: info.Size()}
 	return nil
 }
 
@@ -125,7 +135,7 @@ func writeFileData(file *os.File, data []byte) error {
 	return nil
 }
 
-// Close 停止后台刷盘协程，刷出剩余 buffer，并关闭 wal.log。
+// Close 停止后台刷盘协程，刷出剩余 buffer，并关闭当前活动 segment。
 // Close 可重复调用并返回第一次关闭结果；开始关闭后新的追加返回 os.ErrClosed。
 func (wm *WalManger) Close() error {
 	var closeErr error

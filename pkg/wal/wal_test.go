@@ -6,7 +6,6 @@ package wal
 import (
 	"bytes"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -35,7 +34,7 @@ func TestAppendRecordLargerThanBufferWritesDirectly(t *testing.T) {
 		t.Fatal("AppendRecord() timed out for record larger than WAL buffer")
 	}
 
-	reader, err := os.Open(filepath.Join(wm.Dir, "wal.log"))
+	reader, err := os.Open(activeSegmentPath(t, wm.Dir))
 	if err != nil {
 		t.Fatalf("Open wal.log error = %v", err)
 	}
@@ -74,7 +73,7 @@ func TestReplaceRewritesWALContents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := os.ReadFile(filepath.Join(dir, "wal.log"))
+	got, err := os.ReadFile(activeSegmentPath(t, dir))
 	if err != nil {
 		t.Fatal(err)
 	}
