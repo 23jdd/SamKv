@@ -1,5 +1,8 @@
 package main
 
+// 本文件实现 start/stop/status 后台进程管理，以及 PID/日志文件路径。
+// PID 文件仅是辅助记录而非内核锁；异常退出可能留下陈旧 PID，Windows 状态检查尤其依赖该文件。
+
 import (
 	"fmt"
 	"os"
@@ -16,7 +19,8 @@ const (
 	pidFileName = "SamKv.pid"
 )
 
-// startDaemon 使用来 启动 Daemon
+// startDaemon 重新执行当前二进制并把输出追加到平台日志文件。
+// 成功后父进程调用 os.Exit(0)，因此只能从命令入口调用，不能作为可回收控制流的库函数使用。
 func startDaemon(args ...string) error {
 	if isRunning() {
 		return fmt.Errorf("daemon already running")
@@ -60,7 +64,8 @@ func startDaemon(args ...string) error {
 	return nil
 }
 
-// stopDaemon 停止 Daemon
+// stopDaemon 根据 PID 文件发送终止信号；Windows 使用强制 Kill，Unix 使用 SIGTERM。
+// PID 可能已被操作系统复用，生产部署更适合使用 systemd、Windows Service 或容器编排器管理进程。
 func stopDaemon() error {
 	pid, err := readPID()
 	if err != nil {

@@ -1,5 +1,7 @@
 package main
 
+// 本文件验证容量、分层 Compaction、缓存、保留时间和 WAL 持久性环境变量映射。
+
 import (
 	"os"
 	"path/filepath"

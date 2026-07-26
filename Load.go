@@ -1,5 +1,8 @@
 package main
 
+// 本文件从 .env 与进程环境变量构造 Store Options。
+// godotenv.Load 不覆盖已存在的进程环境变量；无法解析的值保留默认值。
+
 import (
 	"os"
 	"strconv"
@@ -14,6 +17,8 @@ func Load() store.Options {
 	return LoadEnvFile(".env")
 }
 
+// LoadEnvFile 可传空路径以跳过 .env，仅读取当前进程环境。
+// 能解析但不满足 Options 约束的值仍会写入结果，并由 NewStoreManagerWithOptions 返回 ErrInvalidOptions。
 func LoadEnvFile(path string) store.Options {
 	if path != "" {
 		_ = godotenv.Load(path)

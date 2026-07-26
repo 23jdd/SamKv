@@ -2,6 +2,8 @@
 
 package main
 
+// 本文件为 Windows 后台进程设置独立进程组、脱离控制台并隐藏窗口。
+
 import (
 	"os/exec"
 	"syscall"

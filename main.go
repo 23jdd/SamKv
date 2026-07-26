@@ -1,5 +1,8 @@
 package main
 
+// 本文件是 SamKV 服务入口，负责命令解析、Store 生命周期、HTTP 监听和信号优雅关闭。
+// start/stop/status 是进程管理子命令；普通启动从环境读取数据目录、地址、端口和存储配置。
+
 import (
 	"context"
 	"errors"
@@ -34,6 +37,7 @@ func main() {
 	}
 }
 
+// run 启动服务并阻塞到监听失败或收到 SIGINT/SIGTERM；关闭时合并 HTTP 与 Store 的错误。
 func run(args []string) (returnErr error) {
 	if len(args) >= 1 {
 		switch args[0] {
@@ -123,6 +127,7 @@ func parseServerConfig(args []string) (serverConfig, error) {
 	return config, nil
 }
 
+// loadServerAddress 读取大小写敏感的 Address/Port；服务入口不接受端口 0，合法范围为 1..65535。
 func loadServerAddress() (string, int, error) {
 	address := os.Getenv("Address")
 	if address == "" {

@@ -2,6 +2,8 @@
 
 package main
 
+// 本文件为 Unix 后台进程设置新 session，使子进程脱离当前控制终端。
+
 import (
 	"os/exec"
 	"syscall"
