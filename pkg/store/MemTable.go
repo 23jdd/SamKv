@@ -1,7 +1,7 @@
 package store
 
-// 本文件实现 Store 写入路径上的有序 MemTable、近似容量统计和墓碑。
-// Store 负责协调冻结与写入；直接使用 MemTable 时，不要让 MarkImmutable/Clear 与 Put/Delete 并发。
+// 本文件实现 Store 写入路径上的有序 MemTable 和近似容量统计。
+// Store 负责协调冻结与写入；直接使用 MemTable 时，不要让 MarkImmutable/Clear 与 Put 并发。
 
 import (
 	"errors"
@@ -64,23 +64,7 @@ func NewMemTable(limit int) *MemTable {
 	return mt
 }
 
-// Get 根据 key 查询 value。
-// 如果 key 对应的是墓碑或不存在，均返回空字符串和 false；需要区分二者时使用 GetEntry。
-func (mt *MemTable) Get(key string) (string, bool) {
-	value, ok := mt.GetEntry(key)
-	if !ok || value.Deleted {
-		return "", false
-	}
-	return value.Value, true
-}
-
-// GetEntry 返回 MemTable 中的原始记录。
-// 调用方可以通过 Deleted 判断这条记录是否是墓碑。
-func (mt *MemTable) GetEntry(key string) (MemValue, bool) {
-	return mt.table.Get(key)
-}
-
-// Put 插入或更新 key/value。
+// Put 插入 key/value。由于跳表节点不可变，重复 key 不会替换旧值。
 // 如果 key 已存在，会替换旧记录；如果旧记录是墓碑，会重新变成普通值。
 // 空 key/value 在 MemTable 层合法；冻结后返回 ErrImmutableMemTable。
 func (mt *MemTable) Put(key string, value string) error {
@@ -89,25 +73,7 @@ func (mt *MemTable) Put(key string, value string) error {
 	}
 
 	newValue := MemValue{Value: value}
-	oldValue, replaced := mt.table.Set(key, newValue)
-	if replaced {
-		mt.size.Add(int64(recordSize(key, newValue) - recordSize(key, oldValue)))
-		return nil
-	}
-
-	mt.size.Add(int64(recordSize(key, newValue)))
-	return nil
-}
-
-// Delete 写入 key 的墓碑记录。
-// 墓碑必须保留到 SSTable/Compaction 层，否则旧 SSTable 中的值可能被重新查出来。
-func (mt *MemTable) Delete(key string) error {
-	if !mt.mutable.Load() {
-		return ErrImmutableMemTable
-	}
-
-	newValue := MemValue{Deleted: true}
-	oldValue, replaced := mt.table.Set(key, newValue)
+	oldValue, replaced := mt.table.Append(key, newValue)
 	if replaced {
 		mt.size.Add(int64(recordSize(key, newValue) - recordSize(key, oldValue)))
 		return nil
