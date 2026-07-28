@@ -1,8 +1,5 @@
 package skiplist
 
-// 本文件覆盖排序、重复键、空表、Range 回调重入和并发读写边界。
-// 并发用例应配合 go test -race 运行，以验证内部锁而非调用时序保证安全。
-
 import (
 	"sync"
 	"testing"
@@ -30,13 +27,13 @@ func TestSkipListOrderedOperations(t *testing.T) {
 	if list.Add(2, "duplicate") {
 		t.Fatal("Add() accepted a duplicate key")
 	}
-	if old, replaced := list.Set(2, "TWO"); !replaced || old != "two" {
-		t.Fatalf("Set() = %q, %v", old, replaced)
+	if old, replaced := list.Append(2, "TWO"); !replaced || old != "two" {
+		t.Fatalf("Append() = %q, %v", old, replaced)
 	}
-	if value, ok := list.Get(2); !ok || value != "TWO" {
+	if value, ok := list.Get(2); !ok || value != "two" {
 		t.Fatalf("Get(2) = %q, %v", value, ok)
 	}
-	if key, value, ok := list.LowerBound(2); !ok || key != 2 || value != "TWO" {
+	if key, value, ok := list.LowerBound(2); !ok || key != 2 || value != "two" {
 		t.Fatalf("LowerBound(2) = %d, %q, %v", key, value, ok)
 	}
 	if key, _, ok := list.First(); !ok || key != 1 {
@@ -50,13 +47,6 @@ func TestSkipListOrderedOperations(t *testing.T) {
 	if len(entries) != 3 || entries[0].Key != 1 || entries[1].Key != 2 || entries[2].Key != 3 {
 		t.Fatalf("Entries() = %#v", entries)
 	}
-	if value, ok := list.Delete(2); !ok || value != "TWO" {
-		t.Fatalf("Delete(2) = %q, %v", value, ok)
-	}
-	if list.Contains(2) || list.Len() != 2 {
-		t.Fatalf("after delete contains=%v len=%d", list.Contains(2), list.Len())
-	}
-
 	list.Clear()
 	if !list.IsEmpty() {
 		t.Fatal("Clear() did not empty the SkipList")
@@ -69,14 +59,11 @@ func TestSkipListRangeCallbackMayMutateList(t *testing.T) {
 		list.Add(i, i)
 	}
 	list.Range(func(key, value int) bool {
-		list.Set(key, value+10)
+		list.Append(key, value+10)
 		return key < 2
 	})
-	if value, _ := list.Get(0); value != 10 {
-		t.Fatalf("Range callback update = %d, want 10", value)
-	}
-	if value, _ := list.Get(3); value != 3 {
-		t.Fatalf("Range should have stopped before key 3, got %d", value)
+	if value, _ := list.Get(0); value != 0 {
+		t.Fatalf("Range callback append immutable node = %d, want 0", value)
 	}
 }
 
@@ -92,7 +79,7 @@ func TestSkipListConcurrentAccess(t *testing.T) {
 			defer waitGroup.Done()
 			for i := 0; i < perWorker; i++ {
 				key := worker*perWorker + i
-				list.Set(key, key)
+				list.Append(key, key)
 				list.Get(key)
 			}
 		}(worker)

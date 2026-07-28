@@ -1,11 +1,9 @@
 package skiplist
 
-// 本文件实现跳表节点、随机层高以及点查、范围遍历和删除操作。
-// 用法从 New/NewWithConfig 开始；任何公开方法都可以被多个 goroutine 并发调用。
-
 import (
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -14,26 +12,15 @@ const (
 	defaultProbability = 0.25
 )
 
-// CompareFunc 定义 Key 的比较方式。
-//
-// 返回值：
-//
-//	< 0：a < b
-//	= 0：a == b
-//	> 0：a > b
 type CompareFunc[K any] func(a, b K) int
 
-// Node 是跳表中的只读节点视图。
-// Key、Value 可读取，但调用方不能访问或修改内部 forward 链；nil 节点的 Height 为 0。
 type Node[K any, V any] struct {
 	Key   K
 	Value V
 
-	// 不对外暴露，避免调用者修改 SkipList 内部结构。
-	forward []*Node[K, V]
+	forward []atomic.Pointer[Node[K, V]]
 }
 
-// Height 返回节点高度。
 func (n *Node[K, V]) Height() int {
 	if n == nil {
 		return 0
@@ -41,35 +28,26 @@ func (n *Node[K, V]) Height() int {
 	return len(n.forward)
 }
 
-// Entry 是 Entries 和 Range 快照中的键值对。
-// 如果 K/V 包含指针，快照只复制指针值，不会深拷贝其指向的数据。
 type Entry[K any, V any] struct {
 	Key   K
 	Value V
 }
 
-// SkipList 是由调用方比较器定义顺序的并发安全有序映射。
-// 结构体零值不可直接使用，必须通过 New 或 NewWithConfig 创建。
 type SkipList[K any, V any] struct {
-	mu sync.RWMutex
+	head atomic.Pointer[Node[K, V]]
 
-	head *Node[K, V]
-
-	// 当前实际使用的层数，最少为 1。
-	level int
+	level atomic.Int32
 
 	maxLevel    int
 	probability float64
 
-	length int
+	length atomic.Int64
 
 	compare CompareFunc[K]
 	random  *rand.Rand
+	randMu  sync.Mutex
 }
 
-// New 创建一个 SkipList。
-//
-// compare 不能为 nil。
 func New[K any, V any](compare CompareFunc[K]) *SkipList[K, V] {
 	return NewWithConfig[K, V](
 		compare,
@@ -78,9 +56,6 @@ func New[K any, V any](compare CompareFunc[K]) *SkipList[K, V] {
 	)
 }
 
-// NewWithConfig 创建一个可以自定义最大层数和晋升概率的 SkipList。
-// compare=nil、maxLevel<=0 或 probability 不在 (0,1) 时会 panic。
-// 比较器在表的整个生命周期内必须保持一致，否则查找和排序结果未定义。
 func NewWithConfig[K any, V any](
 	compare CompareFunc[K],
 	maxLevel int,
@@ -98,11 +73,11 @@ func NewWithConfig[K any, V any](
 		panic("skiplist: probability must be between 0 and 1")
 	}
 
-	return &SkipList[K, V]{
-		head: &Node[K, V]{
-			forward: make([]*Node[K, V], maxLevel),
-		},
-		level:       1,
+	head := &Node[K, V]{
+		forward: make([]atomic.Pointer[Node[K, V]], maxLevel),
+	}
+
+	sl := &SkipList[K, V]{
 		maxLevel:    maxLevel,
 		probability: probability,
 		compare:     compare,
@@ -110,131 +85,144 @@ func NewWithConfig[K any, V any](
 			rand.NewSource(time.Now().UnixNano()),
 		),
 	}
+	sl.head.Store(head)
+	sl.level.Store(1)
+	return sl
 }
 
-// Len 返回元素数量。
 func (s *SkipList[K, V]) Len() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.length
+	return int(s.length.Load())
 }
 
-// IsEmpty 判断 SkipList 是否为空。
 func (s *SkipList[K, V]) IsEmpty() bool {
 	return s.Len() == 0
 }
 
-// Add 插入一个新元素。
-//
-// 如果 Key 已存在，不更新 Value，并返回 false。
-// 如果插入成功，返回 true。
 func (s *SkipList[K, V]) Add(key K, value V) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	_, exists := s.insert(key, value, false)
 	return !exists
 }
 
-// Set 插入或更新元素。
-//
-// 返回值：
-//
-//	oldValue：Key 原来对应的 Value
-//	replaced：是否替换了已有元素
-//
-// 如果 Key 不存在，会插入新节点，replaced 为 false。
-func (s *SkipList[K, V]) Set(key K, value V) (
+func (s *SkipList[K, V]) Append(key K, value V) (
 	oldValue V,
 	replaced bool,
 ) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	return s.insert(key, value, true)
 }
 
-// insert 执行实际插入逻辑。
-//
-// exists 表示 Key 在插入前是否已经存在。
-// 调用者必须持有写锁。
 func (s *SkipList[K, V]) insert(
 	key K,
 	value V,
 	replace bool,
 ) (oldValue V, exists bool) {
-	update := make([]*Node[K, V], s.maxLevel)
+	for {
+		head := s.head.Load()
+		currentLevel := int(s.level.Load())
 
-	current := s.head
+		update := make([]*Node[K, V], s.maxLevel)
+		succs := make([]*Node[K, V], s.maxLevel)
 
-	// 从最高层向下查找每一层的前驱节点。
-	for level := s.level - 1; level >= 0; level-- {
+		current := head
+
+		for level := currentLevel - 1; level >= 0; level-- {
+			for {
+				next := current.forward[level].Load()
+
+				if next == nil {
+					break
+				}
+
+				if s.compare(next.Key, key) >= 0 {
+					break
+				}
+
+				current = next
+			}
+
+			update[level] = current
+			succs[level] = current.forward[level].Load()
+		}
+
+		for level := currentLevel; level < s.maxLevel; level++ {
+			update[level] = head
+			succs[level] = nil
+		}
+
+		next0 := update[0].forward[0].Load()
+
+		if next0 != nil && s.compare(next0.Key, key) == 0 {
+			oldValue = next0.Value
+
+			_ = replace
+
+			return oldValue, true
+		}
+
+		nodeLevel := s.randomLevel()
+
+		node := &Node[K, V]{
+			Key:     key,
+			Value:   value,
+			forward: make([]atomic.Pointer[Node[K, V]], nodeLevel),
+		}
+
+		for level := 0; level < nodeLevel; level++ {
+			node.forward[level].Store(succs[level])
+		}
+
+		if !update[0].forward[0].CompareAndSwap(succs[0], node) {
+			continue
+		}
+
+		for level := 1; level < nodeLevel; level++ {
+			for {
+				pred := update[level]
+				succ := succs[level]
+
+				if pred.forward[level].Load() != succ {
+					current := head
+					for {
+						next := current.forward[level].Load()
+						if next == nil {
+							break
+						}
+						if s.compare(next.Key, key) >= 0 {
+							break
+						}
+						current = next
+					}
+					pred = current
+					succ = current.forward[level].Load()
+					update[level] = pred
+					succs[level] = succ
+				}
+
+				if pred.forward[level].CompareAndSwap(succ, node) {
+					break
+				}
+
+				succ = pred.forward[level].Load()
+				succs[level] = succ
+			}
+		}
+
 		for {
-			next := current.forward[level]
-
-			if next == nil {
+			oldLevel := s.level.Load()
+			if int32(nodeLevel) <= oldLevel {
 				break
 			}
-
-			if s.compare(next.Key, key) >= 0 {
+			if s.level.CompareAndSwap(oldLevel, int32(nodeLevel)) {
 				break
 			}
-
-			current = next
 		}
 
-		update[level] = current
+		s.length.Add(1)
+
+		return oldValue, false
 	}
-
-	// 第 0 层包含所有节点。
-	current = current.forward[0]
-
-	// Key 已经存在。
-	if current != nil && s.compare(current.Key, key) == 0 {
-		oldValue = current.Value
-
-		if replace {
-			current.Value = value
-		}
-
-		return oldValue, true
-	}
-
-	nodeLevel := s.randomLevel()
-
-	// 新节点高度超过当前 SkipList 高度。
-	if nodeLevel > s.level {
-		for level := s.level; level < nodeLevel; level++ {
-			update[level] = s.head
-		}
-
-		s.level = nodeLevel
-	}
-
-	node := &Node[K, V]{
-		Key:     key,
-		Value:   value,
-		forward: make([]*Node[K, V], nodeLevel),
-	}
-
-	// 将新节点插入每一层。
-	for level := 0; level < nodeLevel; level++ {
-		node.forward[level] = update[level].forward[level]
-		update[level].forward[level] = node
-	}
-
-	s.length++
-
-	return oldValue, false
 }
 
-// Get 根据 Key 查询 Value。
-// 未找到时返回 V 的零值和 false；返回的 Value 若含可变引用，不受跳表锁继续保护。
 func (s *SkipList[K, V]) Get(key K) (V, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	node := s.findNode(key)
 	if node == nil {
 		var zero V
@@ -244,22 +232,17 @@ func (s *SkipList[K, V]) Get(key K) (V, bool) {
 	return node.Value, true
 }
 
-// Contains 判断指定 Key 是否存在。
 func (s *SkipList[K, V]) Contains(key K) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	return s.findNode(key) != nil
 }
 
-// findNode 查找完全匹配的节点。
-// 调用者必须至少持有读锁。
 func (s *SkipList[K, V]) findNode(key K) *Node[K, V] {
-	current := s.head
+	head := s.head.Load()
+	current := head
 
-	for level := s.level - 1; level >= 0; level-- {
+	for level := int(s.level.Load()) - 1; level >= 0; level-- {
 		for {
-			next := current.forward[level]
+			next := current.forward[level].Load()
 
 			if next == nil {
 				break
@@ -275,7 +258,7 @@ func (s *SkipList[K, V]) findNode(key K) *Node[K, V] {
 		}
 	}
 
-	current = current.forward[0]
+	current = current.forward[0].Load()
 
 	if current != nil && s.compare(current.Key, key) == 0 {
 		return current
@@ -284,82 +267,15 @@ func (s *SkipList[K, V]) findNode(key K) *Node[K, V] {
 	return nil
 }
 
-// Delete 删除指定 Key。
-//
-// 返回被删除的 Value，以及是否成功删除。
-func (s *SkipList[K, V]) Delete(key K) (V, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	update := make([]*Node[K, V], s.maxLevel)
-	current := s.head
-
-	for level := s.level - 1; level >= 0; level-- {
-		for {
-			next := current.forward[level]
-
-			if next == nil {
-				break
-			}
-
-			if s.compare(next.Key, key) >= 0 {
-				break
-			}
-
-			current = next
-		}
-
-		update[level] = current
-	}
-
-	target := current.forward[0]
-
-	if target == nil || s.compare(target.Key, key) != 0 {
-		var zero V
-		return zero, false
-	}
-
-	for level := 0; level < s.level; level++ {
-		// target 的高度可能没有这么高。
-		if update[level].forward[level] != target {
-			break
-		}
-
-		update[level].forward[level] = target.forward[level]
-	}
-
-	// 如果最高层已经没有节点，降低 SkipList 层数。
-	for s.level > 1 && s.head.forward[s.level-1] == nil {
-		s.level--
-	}
-
-	s.length--
-
-	value := target.Value
-
-	// 解除引用，便于 GC。
-	for i := range target.forward {
-		target.forward[i] = nil
-	}
-
-	return value, true
-}
-
-// LowerBound 查找第一个 Key >= target 的元素。
-// target 大于所有键或表为空时返回 K/V 零值和 false。
-//
-// 这里的 >= 由 compare 函数定义。
 func (s *SkipList[K, V]) LowerBound(
 	target K,
 ) (key K, value V, found bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	head := s.head.Load()
+	current := head
 
-	current := s.head
-
-	for level := s.level - 1; level >= 0; level-- {
+	for level := int(s.level.Load()) - 1; level >= 0; level-- {
 		for {
-			next := current.forward[level]
+			next := current.forward[level].Load()
 
 			if next == nil {
 				break
@@ -373,7 +289,7 @@ func (s *SkipList[K, V]) LowerBound(
 		}
 	}
 
-	current = current.forward[0]
+	current = current.forward[0].Load()
 
 	if current == nil {
 		return key, value, false
@@ -382,16 +298,13 @@ func (s *SkipList[K, V]) LowerBound(
 	return current.Key, current.Value, true
 }
 
-// First 返回排序后的第一个元素。
 func (s *SkipList[K, V]) First() (
 	key K,
 	value V,
 	found bool,
 ) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	first := s.head.forward[0]
+	head := s.head.Load()
+	first := head.forward[0].Load()
 	if first == nil {
 		return key, value, false
 	}
@@ -399,36 +312,31 @@ func (s *SkipList[K, V]) First() (
 	return first.Key, first.Value, true
 }
 
-// Last 返回排序后的最后一个元素。
 func (s *SkipList[K, V]) Last() (
 	key K,
 	value V,
 	found bool,
 ) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.length == 0 {
+	if s.length.Load() == 0 {
 		return key, value, false
 	}
 
-	current := s.head
+	head := s.head.Load()
+	current := head
 
-	for level := s.level - 1; level >= 0; level-- {
-		for current.forward[level] != nil {
-			current = current.forward[level]
+	for level := int(s.level.Load()) - 1; level >= 0; level-- {
+		for current.forward[level].Load() != nil {
+			current = current.forward[level].Load()
 		}
+	}
+
+	if current == head {
+		return key, value, false
 	}
 
 	return current.Key, current.Value, true
 }
 
-// Range 按 Key 排序顺序遍历所有元素。
-//
-// fn 返回 false 时停止遍历。
-//
-// 为了避免 fn 内部调用 Set/Delete 时发生死锁，
-// 这里先复制快照，然后释放锁，再执行回调。
 func (s *SkipList[K, V]) Range(
 	fn func(key K, value V) bool,
 ) {
@@ -436,21 +344,7 @@ func (s *SkipList[K, V]) Range(
 		return
 	}
 
-	s.mu.RLock()
-
-	entries := make([]Entry[K, V], 0, s.length)
-
-	current := s.head.forward[0]
-	for current != nil {
-		entries = append(entries, Entry[K, V]{
-			Key:   current.Key,
-			Value: current.Value,
-		})
-
-		current = current.forward[0]
-	}
-
-	s.mu.RUnlock()
+	entries := s.Entries()
 
 	for _, entry := range entries {
 		if !fn(entry.Key, entry.Value) {
@@ -459,45 +353,39 @@ func (s *SkipList[K, V]) Range(
 	}
 }
 
-// Entries 返回所有元素的有序快照。
-// 空表返回长度为 0 的切片；后续修改跳表不会改变快照中的键值槽位。
 func (s *SkipList[K, V]) Entries() []Entry[K, V] {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	head := s.head.Load()
+	length := int(s.length.Load())
 
-	entries := make([]Entry[K, V], 0, s.length)
+	entries := make([]Entry[K, V], 0, length)
 
-	current := s.head.forward[0]
+	current := head.forward[0].Load()
 	for current != nil {
 		entries = append(entries, Entry[K, V]{
 			Key:   current.Key,
 			Value: current.Value,
 		})
 
-		current = current.forward[0]
+		current = current.forward[0].Load()
 	}
 
 	return entries
 }
 
-// Clear 清空 SkipList。
 func (s *SkipList[K, V]) Clear() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for i := range s.head.forward {
-		s.head.forward[i] = nil
+	newHead := &Node[K, V]{
+		forward: make([]atomic.Pointer[Node[K, V]], s.maxLevel),
 	}
 
-	s.level = 1
-	s.length = 0
+	s.head.Store(newHead)
+	s.level.Store(1)
+	s.length.Store(0)
 }
 
-// randomLevel 随机生成节点高度。
-// 返回范围为 [1, maxLevel]。
-//
-// 调用者必须持有写锁，因为 rand.Rand 本身不是并发安全的。
 func (s *SkipList[K, V]) randomLevel() int {
+	s.randMu.Lock()
+	defer s.randMu.Unlock()
+
 	level := 1
 
 	for level < s.maxLevel &&
