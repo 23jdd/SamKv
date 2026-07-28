@@ -4,7 +4,7 @@
 
 # SamKv
 
-SamKv 是一个使用 Go 实现、面向结构化日志场景的单机 LSM-Tree KV 存储引擎。项目已经打通 WAL、并发 MemTable、SSTable、Manifest、Block Cache、分层 Compaction、完整性检查、备份恢复与 HTTP 服务，可作为本地嵌入式存储和继续演进的基础。
+SamKv 是一个使用 Go 实现、面向结构化日志场景的单机 LSM-Tree 日志存储引擎。项目已经打通 WAL、并发 MemTable、SSTable、Manifest、Block Cache、分层 Compaction、完整性检查、备份恢复与 HTTP 服务，可作为本地嵌入式日志存储和继续演进的基础。
 
 ## 目录
 
@@ -25,13 +25,13 @@ SamKv 是一个使用 Go 实现、面向结构化日志场景的单机 LSM-Tree 
 | 模块 | 已实现能力 |
 | --- | --- |
 | WAL | 64 MiB 分段、按记录边界轮转、CRC32 记录校验、末段残缺尾部截断、完整坏记录跳过与恢复报告、周期/每写 fsync |
-| MemTable | 并发安全 SkipList、原子容量统计、墓碑、Mutable/Immutable 切换和后台刷盘 |
+| MemTable | 并发安全无锁 SkipList、原子容量统计、Mutable/Immutable 切换和后台刷盘 |
 | SSTable | DataBlock、MetaBlock、IndexBlock、Footer、前缀压缩、restart point、CRC32C Block 校验 |
-| 索引与缓存 | key/标签 BloomFilter、时间与 key 范围索引、共享字节容量 LRU Block Cache |
-| Compaction | L0 重叠合并、非零层增量下推、key-range 并行子任务、共享令牌桶 I/O 限速、原子 Manifest 发布、底层墓碑与保留策略回收 |
+| 索引与缓存 | 标签 BloomFilter、时间范围索引、共享字节容量 LRU Block Cache |
+| Compaction | L0 重叠合并、非零层增量下推、key-range 并行子任务、共享令牌桶 I/O 限速、原子 Manifest 发布、底层保留策略回收 |
 | 元数据 | `MANIFEST-<generation>` 原子发布、`CURRENT` 指针与备份回退、格式版本、SSTable 层级和日志序列号 |
 | 运维 | 数据目录进程锁、Checkpoint、校验修复、全量备份恢复、格式升级、运行指标 |
-| 接入 | KV HTTP API、结构化日志写入/批量写入/QueryFormat 查询、Prometheus 指标、CLI |
+| 接入 | 结构化日志 HTTP API（写入/批量写入/QueryFormat 查询）、Prometheus 指标、CLI |
 
 ## 快速开始
 
@@ -62,26 +62,6 @@ WAL -> Active MemTable -> Immutable MemTable -> L0 SSTable
 同一个数据目录只能由一个 Store 进程打开。第二个进程会收到 `store: data directory is locked`，`LOCK` 文件中保留锁持有者信息。
 
 ## HTTP API
-
-### 普通 KV
-
-| 方法 | 路径 | 请求体 | 成功响应 |
-| --- | --- | --- | --- |
-| `GET` | `/healthz` | 无 | `200 {"status":"ok"}` |
-| `PUT` | `/kv/*key` | `{"value":"..."}` | `204 No Content` |
-| `GET` | `/kv/*key` | 无 | `200 {"key":"...","value":"..."}` |
-| `DELETE` | `/kv/*key` | 无 | `204 No Content` |
-
-`*key` 可以包含 `/`。缺少 key 返回 `400`，key 不存在返回 `404`，SSTable 读取损坏等错误返回 `500`，健康检查在 Store 异常时返回 `503`。HTTP 请求体和编码后的 WAL 单条记录上限均为 64 MiB。
-
-```bash
-curl -X PUT http://127.0.0.1:9999/kv/app/config \
-  -H "Content-Type: application/json" \
-  -d '{"value":"enabled"}'
-
-curl http://127.0.0.1:9999/kv/app/config
-curl -X DELETE http://127.0.0.1:9999/kv/app/config
-```
 
 ### 结构化日志写入
 
@@ -160,9 +140,6 @@ curl http://127.0.0.1:9999/metrics
 ```bash
 go install ./samctl
 
-samctl put app/config enabled
-samctl get app/config
-samctl del app/config
 samctl health
 samctl metrics
 
@@ -176,8 +153,6 @@ samctl query -limit 100 '"request failed"{app=api,level=ERROR}[1h]'
 默认连接 `localhost:9999`。也可以指定地址、端口和超时：
 
 ```bash
-samctl get -a 127.0.0.1 -p 9999 -timeout 5s app/config
-samctl -m put -k app/config -v enabled -a 127.0.0.1 -p 9999
 samctl query -a 127.0.0.1 -p 9999 -timeout 5s 'error{app=api}[15m]'
 ```
 
@@ -229,16 +204,9 @@ WAL 有两种明确策略：
 
 两种策略在正常 `Close` 时都会刷新缓冲并同步。Checkpoint 是把内存数据发布为 SSTable 并裁剪 WAL，不是替代 WAL fsync 的提交协议。
 
-### KV 与日志
+### 日志
 
 ```go
-if err := db.Put("key", "value"); err != nil {
-    panic(err)
-}
-
-value, found, err := db.GetWithError("key")
-records, err := db.Scan("a", "z") // 半开区间 [a, z)
-
 sequence, err := db.WriteLog(store.LogEntry{
     Timestamp: time.Now().UTC(),
     Labels: []utils.Label{
@@ -253,18 +221,17 @@ logs, err := db.Query(end.Add(-time.Hour), end, []utils.Label{
     {Name: "app", Value: "nginx"},
 })
 
-_, _, _, _, _, _ = value, found, records, sequence, logs, err
+_, _, _ = sequence, logs, err
 ```
 
-`Get` 为兼容旧调用保留；需要区分“不存在”和“读取损坏”时应使用 `GetWithError`。`Query` 使用闭区间 `[startTime, endTime]`，标签是子集匹配。普通 KV 的 key 不是结构化日志 key，不能用于 `Query`、基于时间的 `Retention` 或按时间淘汰的 `MaxSizeBytes`。
+`Query` 使用闭区间 `[startTime, endTime]`，标签是子集匹配。基于时间的 `Retention` 或按时间淘汰的 `MaxSizeBytes` 应用于日志时间戳。
 
 ### 批量、Compaction 与维护
 
 ```go
 batch := store.NewBatch().
     Put("a", "1").
-    Put("b", "2").
-    Delete("a")
+    Put("b", "2")
 
 if err := db.WriteBatch(batch); err != nil {
     panic(err)
@@ -287,7 +254,7 @@ _, _, _, _, _, _ = result, verification, backup, upgrade, stats, err
 
 后台 Compaction 使用层级阈值增量合并。L0 达到 `CompactionThreshold` 后合并全部 L0 及其与 L1 重叠的文件；L1 以上每次选择一个源文件和下一层重叠文件。单次分层 Compaction 根据 DataBlock 索引把 key 空间切成互不重叠的 `[start,end)` 子任务，最多使用 `CompactionWorkers` 个 goroutine；输入不足 `CompactionTaskBytes` 时自动减少任务数，避免小文件放大。各子任务并行扫描并生成独立 SSTable，所有输出成功后才一次性发布 Manifest，失败时清理未发布文件。所有输出共享 `CompactionRateLimitBytesPerSec` 令牌桶，因此限制的是聚合带宽；`0` 可关闭限速。Compaction 顺序扫描不会写入 Block Cache。
 
-墓碑、`Retention` 和 `MaxSizeBytes` 只在最底层回收，避免旧值重新出现。`MaxSizeBytes` 对全部子任务结果统一计算，不会被每个子任务重复使用。`Compact()` 保留为显式全量整理入口；它仍是单任务全量整理。`CompactionResult.Path` 保留为首个输出路径，新增代码应使用 `Paths`、`OutputTables` 和 `Subtasks` 查看并行结果。
+`Retention` 和 `MaxSizeBytes` 只在最底层回收，避免旧值重新出现。`MaxSizeBytes` 对全部子任务结果统一计算，不会被每个子任务重复使用。`Compact()` 保留为显式全量整理入口；它仍是单任务全量整理。`CompactionResult.Path` 保留为首个输出路径，新增代码应使用 `Paths`、`OutputTables` 和 `Subtasks` 查看并行结果。
 
 ## 代码文档与示例
 
@@ -310,15 +277,14 @@ go test ./... -run '^Example'
 | WAL | Record 编解码、打开/追加/读取/关闭 |
 | Utils | 复合日志 Key、none/Gzip/Snappy/LZ4/Zstd 压缩 Value |
 | Parse | QueryFormat 解析与时间窗口 |
-| HTTP | 使用 `httptest` 完成 KV PUT/GET |
 | CLI | `samctl` 的 IPv6 地址构造 |
-| Pool / SkipList | 分级缓冲池复用、有序并发表的写入读取 |
+| Pool / SkipList | 分级缓冲池复用、无锁并发表的写入读取 |
 
 Example 是测试的一部分，输出变化会让 `go test` 失败，因此它们同时承担用法文档和回归检查。边界条件仍以 API 旁的 GoDoc 为准，例如：
 
 - `Options{}` 不是合法完整配置，应从 `DefaultOptions()` 开始修改。
 - `Scan` 是 `[startKey,endKey)`；日志 `Query` 是闭区间 `[startTime,endTime]`。
-- 墓碑、`Retention` 和 `MaxSizeBytes` 只在覆盖全部旧版本的最底层 Compaction 回收。
+- `Retention` 和 `MaxSizeBytes` 只在覆盖全部旧版本的最底层 Compaction 回收。
 - `Backup`/`RestoreBackup` 不覆盖已有目录；`RepairDirectory` 必须离线执行并可能永久移除损坏表中的数据。
 - HTTP/CLI 的单请求或单响应上限为 64 MiB；服务当前没有 TLS、认证或限流。
 
@@ -435,7 +401,7 @@ WALSegmentMaxRecords=0
 
 Footer 前 6 字节是 UTF-8 Magic `流萤`，后续保存格式版本及 MetaBlock/IndexBlock 位置。SSTable v2 为每个 Block 增加 CRC32C；读取损坏 Block 会返回错误。当前代码兼容只读 v1，并拒绝未知的未来版本。
 
-打开 SSTable 时只加载 Footer、MetaBlock 和 IndexBlock。DataBlock 按查询范围读取并进入共享 LRU Block Cache；校验和启动恢复扫描绕过缓存，避免缓存掩盖磁盘损坏。`NewIterator` 可在 `[startKey,endKey)` 内按 Block 懒加载遍历并保留墓碑，遍历结束后必须检查 `Error()`。
+打开 SSTable 时只加载 Footer、MetaBlock 和 IndexBlock。DataBlock 按查询范围读取并进入共享 LRU Block Cache；校验和启动恢复扫描绕过缓存，避免缓存掩盖磁盘损坏。`NewIterator` 可在 `[startKey,endKey)` 内按 Block 懒加载遍历，遍历结束后必须检查 `Error()`。
 
 实现已按职责拆为 `sstable_writer.go`、`sstable_reader.go`、`sstable_block.go`、`sstable_meta.go`、`sstable_index.go`、`sstable_footer.go`、`sstable_codec.go` 和 `sstable_iterator.go`；核心 `sstable.go` 只保留稳定格式常量和类型。
 
@@ -481,13 +447,6 @@ go test -race ./...
 
 ```bash
 go run ./cmd/samkv-stress \
-  -mode kv \
-  -count 50000 \
-  -concurrency 8 \
-  -value-bytes 128 \
-  -payload-pattern random
-
-go run ./cmd/samkv-stress \
   -mode logs \
   -count 50000 \
   -concurrency 8 \
@@ -528,10 +487,6 @@ go run ./cmd/samkv-stress \
 
 | 模式 | WAL 策略 | 记录数 | 并发 | Payload | 写吞吐中位数 | 3 轮范围 | Payload 吞吐 |
 | --- | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| KV | interval | 5,000 | 1 | random / 128 B | 369,486 ops/s | 96,623-483,363 | 45.10 MiB/s |
-| KV | interval | 5,000 | 8 | random / 128 B | 417,397 ops/s | 144,526-425,159 | 50.95 MiB/s |
-| KV | every-write | 1,000 | 1 | random / 128 B | 3,354 ops/s | 3,182-3,467 | 0.41 MiB/s |
-| KV | every-write | 1,000 | 8 | random / 128 B | 3,319 ops/s | 3,283-3,374 | 0.41 MiB/s |
 | 日志 | interval | 5,000 | 1 | random / 128 B | 274,136 ops/s | 265,175-278,657 | 33.46 MiB/s |
 | 日志 | interval | 5,000 | 8 | random / 128 B | 258,147 ops/s | 254,624-277,194 | 31.51 MiB/s |
 | 日志 | interval | 5,000 | 8 | repeated / 128 B | 404,760 ops/s | 386,763-408,090 | 49.41 MiB/s |
@@ -543,8 +498,6 @@ go run ./cmd/samkv-stress \
 
 | 模式 | WAL 策略 | 记录数 | Payload | 写吞吐中位数 | Checkpoint | 重开 | 校验 | 总耗时 | SSTable |
 | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| KV | interval | 50,000 | random / 128 B | 455,047 ops/s | 148.4 ms | 43.0 ms | 195.4 ms | 497.6 ms | 1 |
-| KV | every-write | 10,000 | random / 128 B | 3,146 ops/s | 125.2 ms | 26.5 ms | 48.5 ms | 3,440.3 ms | 1 |
 | 日志 | interval | 50,000 | random / 128 B | 258,262 ops/s | 174.4 ms | 55.7 ms | 73.4 ms | 496.1 ms | 1 |
 | 日志 | interval | 20,000 | random / 1,024 B | 94,285 ops/s | 163.6 ms | 66.9 ms | 98.0 ms | 544.8 ms | 2 |
 | 日志 | every-write | 10,000 | random / 128 B | 2,862 ops/s | 100.6 ms | 44.7 ms | 29.6 ms | 3,703.8 ms | 1 |
@@ -572,17 +525,15 @@ go test ./pkg/store \
 
 | 基准 | 中位数 | 内存分配 | 分配次数 |
 | --- | ---: | ---: | ---: |
-| Put / interval | 3.36 us/op | 899 B/op | 7 allocs/op |
-| Put / every-write | 410.31 us/op | 898 B/op | 6 allocs/op |
-| Get / MemTable | 46.61 ns/op | 0 B/op | 0 allocs/op |
-| Get / cached SSTable | 16.68 us/op | 29,168 B/op | 627 allocs/op |
+| WriteLog / interval | 3.36 us/op | 899 B/op | 7 allocs/op |
+| WriteLog / every-write | 410.31 us/op | 898 B/op | 6 allocs/op |
 | Query / structured logs | 10.39 ms/op | 42,571,867 B/op | 19,031 allocs/op |
 
 微基准直接循环单个 API，不包含压力工具的关闭重开和完整校验，因此两组数字用途不同。
 
 ## 当前边界
 
-SamKv 当前是单节点、本地文件系统存储，适合作为嵌入式 KV、单机日志存储和继续开发的基础，但不是生产级分布式日志数据库。
+SamKv 当前是单节点、本地文件系统存储，适合作为嵌入式日志存储和继续开发的基础，但不是生产级分布式日志数据库。
 
 - 没有分片、副本、一致性协议、远程对象存储或跨节点故障转移。
 - HTTP 服务没有认证、授权、TLS、租户隔离和请求级限流。
