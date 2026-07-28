@@ -20,22 +20,18 @@ func TestAutoCheckpointKeepsWritesVisibleAndRewritesWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put("large", strings.Repeat("x", 256)); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, store, "large", strings.Repeat("x", 256))
 
 	waitForStoreCondition(t, func() bool {
 		store.mu.RLock()
 		defer store.mu.RUnlock()
 		return len(store.immutables) == 0 && len(store.sstables) == 1 && store.backgroundErr == nil
 	})
-	if value, ok := store.Get("large"); !ok || len(value) != 256 {
+	if value, ok := getStore(t, store, "large"); !ok || len(value) != 256 {
 		t.Fatalf("Get(large) = len:%d, %v", len(value), ok)
 	}
 
-	if err := store.Put("pending", "wal-only"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, store, "pending", "wal-only")
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +46,7 @@ func TestAutoCheckpointKeepsWritesVisibleAndRewritesWAL(t *testing.T) {
 		"large":   strings.Repeat("x", 256),
 		"pending": "wal-only",
 	} {
-		if got, ok := reopened.Get(key); !ok || got != want {
+		if got, ok := getStore(t, reopened, key); !ok || got != want {
 			t.Fatalf("Get(%q) = %q, %v", key, got, ok)
 		}
 	}
@@ -91,10 +87,7 @@ func TestConcurrentWritesDuringAutomaticMemTableSwitch(t *testing.T) {
 			defer waitGroup.Done()
 			for i := 0; i < writesPerGoroutine; i++ {
 				key := fmt.Sprintf("%02d-%03d", worker, i)
-				if err := store.Put(key, strings.Repeat("v", 32)); err != nil {
-					errCh <- err
-					return
-				}
+				putStore(t, store, key, strings.Repeat("v", 32))
 			}
 		}(worker)
 	}
@@ -110,7 +103,7 @@ func TestConcurrentWritesDuringAutomaticMemTableSwitch(t *testing.T) {
 	for worker := 0; worker < goroutines; worker++ {
 		for i := 0; i < writesPerGoroutine; i++ {
 			key := fmt.Sprintf("%02d-%03d", worker, i)
-			if value, ok := store.Get(key); !ok || len(value) != 32 {
+			if value, ok := getStore(t, store, key); !ok || len(value) != 32 {
 				t.Fatalf("Get(%q) = len:%d, %v", key, len(value), ok)
 			}
 		}
@@ -127,15 +120,11 @@ func TestAutomaticCompactionAtTableThreshold(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.Put("a", "1"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, store, "a", "1")
 	if _, err := store.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put("b", "2"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, store, "b", "2")
 	if _, err := store.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}

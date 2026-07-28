@@ -18,9 +18,7 @@ func TestCheckpointPrunesOnlyFrozenWALSegments(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := database.Put("before", "checkpoint"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "before", "checkpoint")
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
@@ -32,9 +30,7 @@ func TestCheckpointPrunesOnlyFrozenWALSegments(t *testing.T) {
 		t.Fatalf("segments after checkpoint = %+v", segments)
 	}
 
-	if err := database.Put("after", "checkpoint"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "after", "checkpoint")
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +41,7 @@ func TestCheckpointPrunesOnlyFrozenWALSegments(t *testing.T) {
 	}
 	defer reopened.Close()
 	for key, want := range map[string]string{"before": "checkpoint", "after": "checkpoint"} {
-		if got, ok := reopened.Get(key); !ok || got != want {
+		if got, ok := getStore(t, reopened, key); !ok || got != want {
 			t.Fatalf("Get(%q) = %q, %v; want %q", key, got, ok, want)
 		}
 	}
@@ -57,9 +53,7 @@ func TestMemTableCarriesSealedSegmentBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := database.Put("key", "value"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "key", "value")
 
 	database.mu.Lock()
 	frozen, err := database.freezeActiveLocked()

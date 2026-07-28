@@ -14,13 +14,12 @@ func TestStatsReportsOperationsAndStorage(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.Put("a", "1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Delete("b"); err != nil {
-		t.Fatal(err)
-	}
-	store.Get("a")
+	putStore(t, store, "a", "1")
+	// TODO: KV delete removed in logs-only mode
+	// if err := store.Delete("b"); err != nil {
+	// 	t.Fatal(err)
+	// }
+	getStore(t, store, "a")
 	if _, err := store.Scan("", ""); err != nil {
 		t.Fatal(err)
 	}

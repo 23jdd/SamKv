@@ -34,9 +34,7 @@ func TestStoreIgnoresOrphanSStableAndReservesItsID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Put("committed", "value"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, st, "committed", "value")
 	if _, err := st.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +59,7 @@ func TestStoreIgnoresOrphanSStableAndReservesItsID(t *testing.T) {
 	if _, err := os.Stat(staleTemp); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stale temp stat error = %v, want os.ErrNotExist", err)
 	}
-	if got, ok := reopened.Get("orphan"); ok || got != "" {
+	if got, ok := getStore(t, reopened, "orphan"); ok || got != "" {
 		t.Fatalf("Get(orphan) = %q, %v; want empty, false", got, ok)
 	}
 	if reopened.nextSSTableID != 100 {

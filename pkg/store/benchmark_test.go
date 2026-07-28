@@ -10,6 +10,50 @@ import (
 	"github.com/23jdd/SamKv/pkg/utils"
 )
 
+func benchPut(b *testing.B, st *StoreManger, key, value string) {
+	b.Helper()
+	if err := st.WriteBatch(NewBatch().Put(key, value)); err != nil {
+		b.Fatal(err)
+	}
+}
+
+func benchGet(b *testing.B, st *StoreManger, key string) (string, bool) {
+	b.Helper()
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	if entry, ok := st.mem.table.Get(key); ok {
+		if entry.Deleted {
+			return "", false
+		}
+		return entry.Value, true
+	}
+	for i := len(st.immutables) - 1; i >= 0; i-- {
+		immutable := st.immutables[i]
+		if entry, ok := immutable.table.Get(key); ok {
+			if entry.Deleted {
+				return "", false
+			}
+			return entry.Value, true
+		}
+	}
+	for i := len(st.sstables) - 1; i >= 0; i-- {
+		record, ok, err := st.sstables[i].GetRecord(key)
+		if err != nil {
+			b.Helper()
+			b.Fatalf("SSTable GetRecord error: %v", err)
+		}
+		if !ok {
+			continue
+		}
+		if record.Deleted {
+			return "", false
+		}
+		return record.Val, true
+	}
+	return "", false
+}
+
 func BenchmarkStorePutSyncInterval(b *testing.B) {
 	benchmarkStorePut(b, WALSyncInterval)
 }
@@ -30,7 +74,7 @@ func benchmarkStorePut(b *testing.B, policy WALSyncPolicy) {
 	value := string(make([]byte, 256))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := database.Put(fmt.Sprintf("key-%012d", i), value); err != nil {
+		if err := database.WriteBatch(NewBatch().Put(fmt.Sprintf("key-%012d", i), value)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -49,12 +93,10 @@ func BenchmarkStoreGetFromMemTable(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer database.Close()
-	if err := database.Put("key", "value"); err != nil {
-		b.Fatal(err)
-	}
+	benchPut(b, database, "key", "value")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := database.Get("key"); !ok {
+		if _, ok := benchGet(b, database, "key"); !ok {
 			b.Fatal("key not found")
 		}
 	}
@@ -70,7 +112,7 @@ func BenchmarkStoreGetFromCachedSSTable(b *testing.B) {
 		b.Fatal(err)
 	}
 	for i := 0; i < 1000; i++ {
-		if err := database.Put(fmt.Sprintf("key-%04d", i), "value"); err != nil {
+		if err := database.WriteBatch(NewBatch().Put(fmt.Sprintf("key-%04d", i), "value")); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -85,12 +127,12 @@ func BenchmarkStoreGetFromCachedSSTable(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer database.Close()
-	if _, ok := database.Get("key-0500"); !ok {
+	if _, ok := benchGet(b, database, "key-0500"); !ok {
 		b.Fatal("key not found")
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := database.Get("key-0500"); !ok {
+		if _, ok := benchGet(b, database, "key-0500"); !ok {
 			b.Fatal("key not found")
 		}
 	}

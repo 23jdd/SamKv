@@ -61,7 +61,7 @@ func TestStoreVerifyAggregatesPublishedTables(t *testing.T) {
 	}
 	defer database.Close()
 	for _, key := range []string{"a", "b"} {
-		if err := database.Put(key, key); err != nil {
+		if err := database.WriteBatch(NewBatch().Put(key, key)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := database.Checkpoint(); err != nil {

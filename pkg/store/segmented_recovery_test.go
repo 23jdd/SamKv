@@ -37,11 +37,11 @@ func TestRecoverWALDirectoryReplaysAllSegments(t *testing.T) {
 	if report.Segments != 2 || report.Records != 2 {
 		t.Fatalf("report = %+v", report)
 	}
-	if value, ok := mem.Get("a"); !ok || value != "1" {
-		t.Fatalf("Get(a) = %q, %v", value, ok)
+	if entry, ok := mem.table.Get("a"); !ok || entry.Value != "1" {
+		t.Fatalf("Get(a) = %#v, %v", entry, ok)
 	}
-	if value, ok := mem.Get("b"); !ok || value != "2" {
-		t.Fatalf("Get(b) = %q, %v", value, ok)
+	if entry, ok := mem.table.Get("b"); !ok || entry.Value != "2" {
+		t.Fatalf("Get(b) = %#v, %v", entry, ok)
 	}
 }
 
@@ -68,10 +68,10 @@ func TestRecoverWALDirectorySkipsCompleteCorruptRecord(t *testing.T) {
 	if report.SkippedRecords != 1 || report.Records != 1 {
 		t.Fatalf("report = %+v", report)
 	}
-	if _, ok := mem.Get("bad"); ok {
+	if _, ok := mem.table.Get("bad"); ok {
 		t.Fatal("corrupt record was applied")
 	}
-	if value, ok := mem.Get("good"); !ok || value != "value" {
-		t.Fatalf("Get(good) = %q, %v", value, ok)
+	if entry, ok := mem.table.Get("good"); !ok || entry.Value != "value" {
+		t.Fatalf("Get(good) = %#v, %v", entry, ok)
 	}
 }

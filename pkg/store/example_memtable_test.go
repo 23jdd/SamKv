@@ -14,7 +14,8 @@ func ExampleMemTable() {
 	mem := store.NewMemTable(0)
 	_ = mem.Put("b", "2")
 	_ = mem.Put("a", "1")
-	_ = mem.Delete("b")
+	// TODO: KV delete removed in logs-only mode
+	// _ = mem.Delete("b")
 
 	for _, record := range mem.Entries() {
 		fmt.Println(record.Key, record.Val, record.Deleted)
@@ -22,7 +23,7 @@ func ExampleMemTable() {
 
 	// Output:
 	// a 1 false
-	// b  true
+	// b 2 false
 }
 
 func ExampleBatch() {
@@ -42,12 +43,15 @@ func ExampleBatch() {
 
 	batch := store.NewBatch().
 		Put("status", "starting").
-		Put("status", "ready").
-		Delete("obsolete")
+		Put("status", "ready")
 	if err := database.WriteBatch(batch); err != nil {
 		panic(err)
 	}
-	value, found := database.Get("status")
+	records, _ := database.Scan("status", "status\x00")
+	value, found := "", false
+	if len(records) > 0 && !records[0].Deleted {
+		value, found = records[0].Val, true
+	}
 	fmt.Println(value, found)
 
 	// Output:

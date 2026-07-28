@@ -19,9 +19,7 @@ func TestStoreReadsSSTableThroughSharedBlockCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("cached", "value"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "cached", "value")
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +33,7 @@ func TestStoreReadsSSTableThroughSharedBlockCache(t *testing.T) {
 	}
 	defer database.Close()
 	for i := 0; i < 2; i++ {
-		if value, ok := database.Get("cached"); !ok || value != "value" {
+		if value, ok := getStore(t, database, "cached"); !ok || value != "value" {
 			t.Fatalf("Get(cached) = %q, %v", value, ok)
 		}
 	}
@@ -54,9 +52,7 @@ func TestStoreVerifyBypassesCachedBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("key", "value"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "key", "value")
 	path, err := database.Checkpoint()
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +66,7 @@ func TestStoreVerifyBypassesCachedBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if _, ok := database.Get("key"); !ok {
+	if _, ok := getStore(t, database, "key"); !ok {
 		t.Fatal("key not found before corruption")
 	}
 	handle := database.sstables[0].Index()[0].Handle

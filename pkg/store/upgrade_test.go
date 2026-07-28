@@ -53,7 +53,7 @@ func TestUpgradeFormatRewritesLegacySSTable(t *testing.T) {
 	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("legacy file still exists: %v", err)
 	}
-	if value, ok := database.Get("legacy"); !ok || value != "value" {
+	if value, ok := getStore(t, database, "legacy"); !ok || value != "value" {
 		t.Fatalf("Get(legacy) = %q, %v", value, ok)
 	}
 	if err := database.Close(); err != nil {

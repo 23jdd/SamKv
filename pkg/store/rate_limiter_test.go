@@ -94,15 +94,11 @@ func TestCompactRoutesSSTableWritesThroughSharedLimiter(t *testing.T) {
 	}
 	defer database.Close()
 
-	if err := database.Put("a", "first"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "a", "first")
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("b", "second"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "b", "second")
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}

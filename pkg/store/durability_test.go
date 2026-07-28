@@ -20,16 +20,14 @@ func TestStoreStrictDurabilityWritesWALBeforePutReturns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := database.Put("durable", "value"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "durable", "value")
 
 	recovered := NewMemTable(0)
 	if _, err := RecoverWALDirectory(database.dir, recovered); err != nil {
 		t.Fatal(err)
 	}
-	if value, ok := recovered.Get("durable"); !ok || value != "value" {
-		t.Fatalf("recovered value = %q, %v", value, ok)
+	if entry, ok := recovered.table.Get("durable"); !ok || entry.Deleted || entry.Value != "value" {
+		t.Fatalf("recovered value = %#v, %v", entry, ok)
 	}
 }
 

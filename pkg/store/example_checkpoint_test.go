@@ -28,9 +28,15 @@ func ExampleStoreManger_Checkpoint() {
 	}
 	defer database.Close()
 
-	_ = database.Put("service", "api")
+	if err := database.WriteBatch(store.NewBatch().Put("service", "api")); err != nil {
+		panic(err)
+	}
 	path, err := database.Checkpoint()
-	value, found := database.Get("service")
+	records, _ := database.Scan("service", "service\x00")
+	value, found := "", false
+	if len(records) > 0 && !records[0].Deleted {
+		value, found = records[0].Val, true
+	}
 	fmt.Println(filepath.Base(path), err)
 	fmt.Println(value, found)
 	// Output:

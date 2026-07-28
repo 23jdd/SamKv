@@ -18,15 +18,14 @@ func TestCompactLevelPreservesTombstoneUntilBottomLevel(t *testing.T) {
 	}
 	defer database.Close()
 
-	if err := database.Put("key", "old"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "key", "old")
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Delete("key"); err != nil {
-		t.Fatal(err)
-	}
+	// TODO: KV delete removed in logs-only mode
+	// if err := database.Delete("key"); err != nil {
+	// 	t.Fatal(err)
+	// }
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +52,7 @@ func TestCompactLevelPreservesTombstoneUntilBottomLevel(t *testing.T) {
 	if result.TargetLevel != 2 || result.OutputRecords != 0 || len(database.sstables) != 0 {
 		t.Fatalf("L1 result = %#v, tables=%d", result, len(database.sstables))
 	}
-	if _, ok := database.Get("key"); ok {
+	if _, ok := getStore(t, database, "key"); ok {
 		t.Fatal("deleted key was resurrected")
 	}
 }
@@ -70,7 +69,7 @@ func TestCompactLevelOnlyMovesOneNonZeroLevelTable(t *testing.T) {
 	defer database.Close()
 
 	for _, key := range []string{"a", "z"} {
-		if err := database.Put(key, key); err != nil {
+		if err := database.WriteBatch(NewBatch().Put(key, key)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := database.Checkpoint(); err != nil {
@@ -95,7 +94,7 @@ func TestCompactLevelOnlyMovesOneNonZeroLevelTable(t *testing.T) {
 		t.Fatalf("manifest after L1 compaction = %#v", database.manifest)
 	}
 	for _, key := range []string{"a", "z"} {
-		if value, ok := database.Get(key); !ok || value != key {
+		if value, ok := getStore(t, database, key); !ok || value != key {
 			t.Fatalf("Get(%s) = %q, %v", key, value, ok)
 		}
 	}
@@ -125,7 +124,7 @@ func TestCompactLevelPublishesParallelOutputs(t *testing.T) {
 
 	keys := []string{"a", "c", "e", "g", "i", "k"}
 	for _, key := range keys {
-		if err := database.Put(key, "value-"+key); err != nil {
+		if err := database.WriteBatch(NewBatch().Put(key, "value-"+key)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := database.Checkpoint(); err != nil {
@@ -174,7 +173,7 @@ func TestCompactLevelPublishesParallelOutputs(t *testing.T) {
 	}
 	defer reopened.Close()
 	for _, key := range keys {
-		if value, ok := reopened.Get(key); !ok || value != "value-"+key {
+		if value, ok := getStore(t, reopened, key); !ok || value != "value-"+key {
 			t.Fatalf("Get(%q) = %q, %v after reopen", key, value, ok)
 		}
 	}

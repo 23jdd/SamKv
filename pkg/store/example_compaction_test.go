@@ -30,9 +30,13 @@ func ExampleStoreManger_CompactLevel() {
 	}
 	defer database.Close()
 
-	_ = database.Put("a", "1")
+	if err := database.WriteBatch(store.NewBatch().Put("a", "1")); err != nil {
+		panic(err)
+	}
 	_, _ = database.Checkpoint()
-	_ = database.Put("z", "2")
+	if err := database.WriteBatch(store.NewBatch().Put("z", "2")); err != nil {
+		panic(err)
+	}
 	_, _ = database.Checkpoint()
 
 	result, err := database.CompactLevel(0)

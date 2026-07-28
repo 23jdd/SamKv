@@ -17,15 +17,11 @@ func TestRepairDirectoryQuarantinesCorruptionWithoutRevivingOrphans(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("a", "valid"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "a", "valid")
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("b", "corrupt"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "b", "corrupt")
 	corruptPath, err := database.Checkpoint()
 	if err != nil {
 		t.Fatal(err)
@@ -68,13 +64,13 @@ func TestRepairDirectoryQuarantinesCorruptionWithoutRevivingOrphans(t *testing.T
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if value, ok := reopened.Get("a"); !ok || value != "valid" {
+	if value, ok := getStore(t, reopened, "a"); !ok || value != "valid" {
 		t.Fatalf("Get(a) = %q, %v", value, ok)
 	}
-	if _, ok := reopened.Get("b"); ok {
+	if _, ok := getStore(t, reopened, "b"); ok {
 		t.Fatal("corrupted key b was not removed")
 	}
-	if _, ok := reopened.Get("orphan"); ok {
+	if _, ok := getStore(t, reopened, "orphan"); ok {
 		t.Fatal("orphan SSTable was unexpectedly added to MANIFEST")
 	}
 }
@@ -96,9 +92,7 @@ func TestRepairDirectorySupportsBackupOnlyManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("key", "value"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "key", "value")
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +118,7 @@ func TestRepairDirectorySupportsBackupOnlyManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if value, ok := reopened.Get("key"); !ok || value != "value" {
+	if value, ok := getStore(t, reopened, "key"); !ok || value != "value" {
 		t.Fatalf("Get(key) = %q, %v", value, ok)
 	}
 }

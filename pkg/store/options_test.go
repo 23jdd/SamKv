@@ -76,7 +76,7 @@ func TestWriteLogUsesConfiguredCompression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, ok := database.Get(string(key))
+	raw, ok := getStore(t, database, string(key))
 	if !ok {
 		t.Fatal("structured log key not found")
 	}
@@ -126,7 +126,7 @@ func TestStorePassesWALSegmentOptions(t *testing.T) {
 	}
 	defer database.Close()
 	for index := 0; index < 3; index++ {
-		if err := database.Put(fmt.Sprintf("key-%d", index), "value"); err != nil {
+		if err := database.WriteBatch(NewBatch().Put(fmt.Sprintf("key-%d", index), "value")); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -25,7 +25,9 @@ func ExampleStoreManger_Backup() {
 	if err != nil {
 		panic(err)
 	}
-	_ = database.Put("release", "v1")
+	if err := database.WriteBatch(store.NewBatch().Put("release", "v1")); err != nil {
+		panic(err)
+	}
 
 	metadata, backupErr := database.Backup(backupDir)
 	_, verifyErr := store.VerifyBackup(backupDir)
@@ -36,7 +38,11 @@ func ExampleStoreManger_Backup() {
 	if openErr != nil {
 		panic(openErr)
 	}
-	value, found := restored.Get("release")
+	records, _ := restored.Scan("release", "release\x00")
+	value, found := "", false
+	if len(records) > 0 && !records[0].Deleted {
+		value, found = records[0].Val, true
+	}
 	_ = restored.Close()
 
 	fmt.Println(len(metadata.Files), backupErr, verifyErr, restoreErr)

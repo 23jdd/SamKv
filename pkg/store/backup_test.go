@@ -24,9 +24,7 @@ func TestBackupVerifyAndRestoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("config", "enabled"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "config", "enabled")
 	timestamp := time.Now().UTC().Add(-time.Minute)
 	labels := []utils.Label{{Name: "app", Value: "api"}}
 	if _, err := database.WriteLog(LogEntry{Timestamp: timestamp, Labels: labels, Message: []byte("request failed")}); err != nil {
@@ -55,7 +53,7 @@ func TestBackupVerifyAndRestoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	if value, ok := restored.Get("config"); !ok || value != "enabled" {
+	if value, ok := getStore(t, restored, "config"); !ok || value != "enabled" {
 		t.Fatalf("Get(config) = %q, %v", value, ok)
 	}
 	logs, err := restored.Query(timestamp.Add(-time.Second), timestamp.Add(time.Second), labels)
@@ -73,9 +71,7 @@ func TestVerifyBackupRejectsTamperedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("key", "value"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "key", "value")
 	backupDir := filepath.Join(root, "backup")
 	metadata, err := database.Backup(backupDir)
 	if err != nil {

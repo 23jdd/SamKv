@@ -50,9 +50,7 @@ func TestCheckpointRecordsCurrentSSTableVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := database.Put("key", "value"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "key", "value")
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}

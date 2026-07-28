@@ -15,9 +15,7 @@ func TestStoreAutomaticallyRecoversWAL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStoreManger() error = %v", err)
 	}
-	if err := store.Put("pending", "value"); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
+	putStore(t, store, "pending", "value")
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -28,7 +26,7 @@ func TestStoreAutomaticallyRecoversWAL(t *testing.T) {
 	}
 	defer reopened.Close()
 
-	value, ok := reopened.Get("pending")
+	value, ok := getStore(t, reopened, "pending")
 	if !ok || value != "value" {
 		t.Fatalf("Get(pending) = %q, %v; want value, true", value, ok)
 	}
@@ -40,9 +38,7 @@ func TestStoreRepairsIncompleteWALTailBeforeAppending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStoreManger() error = %v", err)
 	}
-	if err := store.Put("before", "crash"); err != nil {
-		t.Fatalf("Put(before) error = %v", err)
-	}
+	putStore(t, store, "before", "crash")
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -73,7 +69,7 @@ func TestStoreRepairsIncompleteWALTailBeforeAppending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen with incomplete tail error = %v", err)
 	}
-	if value, ok := reopened.Get("before"); !ok || value != "crash" {
+	if value, ok := getStore(t, reopened, "before"); !ok || value != "crash" {
 		t.Fatalf("Get(before) = %q, %v", value, ok)
 	}
 	info, err = os.Stat(walPath)
@@ -83,9 +79,7 @@ func TestStoreRepairsIncompleteWALTailBeforeAppending(t *testing.T) {
 	if info.Size() != validSize {
 		t.Fatalf("repaired WAL size = %d, want %d", info.Size(), validSize)
 	}
-	if err := reopened.Put("after", "restart"); err != nil {
-		t.Fatalf("Put(after) error = %v", err)
-	}
+	putStore(t, reopened, "after", "restart")
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +89,7 @@ func TestStoreRepairsIncompleteWALTailBeforeAppending(t *testing.T) {
 		t.Fatalf("second reopen error = %v", err)
 	}
 	defer again.Close()
-	if value, ok := again.Get("after"); !ok || value != "restart" {
+	if value, ok := getStore(t, again, "after"); !ok || value != "restart" {
 		t.Fatalf("Get(after) = %q, %v", value, ok)
 	}
 }

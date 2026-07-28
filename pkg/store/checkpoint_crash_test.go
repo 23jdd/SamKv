@@ -19,9 +19,7 @@ func TestCheckpointRecoveryToleratesPublishedManifestWithOldWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("key", "before-checkpoint"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "key", "before-checkpoint")
 	if err := database.wm.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -32,9 +30,7 @@ func TestCheckpointRecoveryToleratesPublishedManifestWithOldWAL(t *testing.T) {
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("key", "after-checkpoint"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, database, "key", "after-checkpoint")
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +43,7 @@ func TestCheckpointRecoveryToleratesPublishedManifestWithOldWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := reopened.Get("key"); !ok || got != "after-checkpoint" {
+	if got, ok := getStore(t, reopened, "key"); !ok || got != "after-checkpoint" {
 		t.Fatalf("Get(key) = %q, %v; want after-checkpoint, true", got, ok)
 	}
 
@@ -71,7 +67,7 @@ func TestCheckpointRecoveryToleratesPublishedManifestWithOldWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer verified.Close()
-	if got, ok := verified.Get("key"); !ok || got != "after-checkpoint" {
+	if got, ok := getStore(t, verified, "key"); !ok || got != "after-checkpoint" {
 		t.Fatalf("Get(key) after second restart = %q, %v; want after-checkpoint, true", got, ok)
 	}
 }

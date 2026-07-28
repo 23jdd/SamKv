@@ -14,15 +14,11 @@ func TestManifestSupportsRepeatedCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put("a", "1"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, store, "a", "1")
 	if _, err := store.Checkpoint(); err != nil {
 		t.Fatalf("first Checkpoint() error = %v", err)
 	}
-	if err := store.Put("b", "2"); err != nil {
-		t.Fatal(err)
-	}
+	putStore(t, store, "b", "2")
 	if _, err := store.Checkpoint(); err != nil {
 		t.Fatalf("second Checkpoint() error = %v", err)
 	}
@@ -44,7 +40,7 @@ func TestManifestSupportsRepeatedCheckpoint(t *testing.T) {
 	}
 	defer reopened.Close()
 	for key, want := range map[string]string{"a": "1", "b": "2"} {
-		if got, ok := reopened.Get(key); !ok || got != want {
+		if got, ok := getStore(t, reopened, key); !ok || got != want {
 			t.Fatalf("Get(%q) = %q, %v; want %q, true", key, got, ok, want)
 		}
 	}
