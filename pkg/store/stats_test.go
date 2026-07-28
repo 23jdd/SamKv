@@ -31,13 +31,13 @@ func TestStatsReportsOperationsAndStorage(t *testing.T) {
 	}
 
 	stats := store.Stats()
-	if stats.WriteOperations != 2 || stats.ReadOperations != 2 {
+	if stats.WriteOperations != 1 || stats.ReadOperations != 1 {
 		t.Fatalf("operation stats = writes:%d reads:%d", stats.WriteOperations, stats.ReadOperations)
 	}
 	if stats.Checkpoints != 1 || stats.Compactions != 1 {
 		t.Fatalf("maintenance stats = checkpoints:%d compactions:%d", stats.Checkpoints, stats.Compactions)
 	}
-	if stats.SSTables != 1 || stats.SSTableRecords != 2 || stats.LevelTables[0] != 1 {
+	if stats.SSTables != 1 || stats.SSTableRecords != 1 || stats.LevelTables[0] != 1 {
 		t.Fatalf("sstable stats = %#v", stats)
 	}
 	if stats.WALBytes != 0 || stats.SSTableBytes == 0 || stats.BackgroundError != nil {

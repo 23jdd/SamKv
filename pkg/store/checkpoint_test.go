@@ -69,31 +69,6 @@ func TestStoreCheckpointWritesSSTableAndResetsWAL(t *testing.T) {
 	}
 }
 
-func TestStoreCheckpointKeepsTombstoneAboveOlderSSTable(t *testing.T) {
-	st, err := NewStoreManger(t.TempDir(), 1024)
-	if err != nil {
-		t.Fatalf("NewStoreManger() error = %v", err)
-	}
-	defer st.Close()
-
-	putStore(t, st, "k", "old")
-	if _, err := st.Checkpoint(); err != nil {
-		t.Fatalf("Checkpoint(old) error = %v", err)
-	}
-
-	// TODO: KV delete removed in logs-only mode
-	// if err := st.Delete("k"); err != nil {
-	// 	t.Fatalf("Delete(k) error = %v", err)
-	// }
-	if _, err := st.Checkpoint(); err != nil {
-		t.Fatalf("Checkpoint(tombstone) error = %v", err)
-	}
-
-	if value, ok := getStore(t, st, "k"); ok {
-		t.Fatalf("Get(k) after tombstone checkpoint = %q, true; want false", value)
-	}
-}
-
 func TestStoreLoadsSSTablesFromManifest(t *testing.T) {
 	dir := t.TempDir()
 	st, err := NewStoreManger(dir, 1024)

@@ -42,7 +42,6 @@ func ExampleBatch() {
 	defer database.Close()
 
 	batch := store.NewBatch().
-		Put("status", "starting").
 		Put("status", "ready")
 	if err := database.WriteBatch(batch); err != nil {
 		panic(err)

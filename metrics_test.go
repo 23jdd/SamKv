@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/23jdd/SamKv/pkg/store"
 )

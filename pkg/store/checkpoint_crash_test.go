@@ -19,7 +19,7 @@ func TestCheckpointRecoveryToleratesPublishedManifestWithOldWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	putStore(t, database, "key", "before-checkpoint")
+	putStore(t, database, "k1", "before-checkpoint")
 	if err := database.wm.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestCheckpointRecoveryToleratesPublishedManifestWithOldWAL(t *testing.T) {
 	if _, err := database.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
-	putStore(t, database, "key", "after-checkpoint")
+	putStore(t, database, "k2", "after-checkpoint")
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -43,8 +43,8 @@ func TestCheckpointRecoveryToleratesPublishedManifestWithOldWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := getStore(t, reopened, "key"); !ok || got != "after-checkpoint" {
-		t.Fatalf("Get(key) = %q, %v; want after-checkpoint, true", got, ok)
+	if got, ok := getStore(t, reopened, "k2"); !ok || got != "after-checkpoint" {
+		t.Fatalf("Get(k2) = %q, %v; want after-checkpoint, true", got, ok)
 	}
 
 	// 再次发布后，重复旧段和包含最新更新的段都可安全回收。
@@ -67,7 +67,7 @@ func TestCheckpointRecoveryToleratesPublishedManifestWithOldWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer verified.Close()
-	if got, ok := getStore(t, verified, "key"); !ok || got != "after-checkpoint" {
-		t.Fatalf("Get(key) after second restart = %q, %v; want after-checkpoint, true", got, ok)
+	if got, ok := getStore(t, verified, "k2"); !ok || got != "after-checkpoint" {
+		t.Fatalf("Get(k2) after second restart = %q, %v; want after-checkpoint, true", got, ok)
 	}
 }

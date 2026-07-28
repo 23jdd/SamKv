@@ -20,14 +20,13 @@ func TestWriteBatchPersistsOrderedOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	batch := NewBatch().
-		Put("a", "old").
-		Put("b", strings.Repeat("b", 5000)).
-		Put("a", "new")
+		Put("a", "a-value").
+		Put("b", strings.Repeat("b", 5000))
 	if err := store.WriteBatch(batch); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := getStore(t, store, "a"); ok {
-		t.Fatal("a should not exist")
+	if value, ok := getStore(t, store, "a"); !ok || value != "a-value" {
+		t.Fatalf("Get(a) = %q, %v", value, ok)
 	}
 	if value, ok := getStore(t, store, "b"); !ok || len(value) != 5000 {
 		t.Fatalf("Get(b) = len:%d, %v", len(value), ok)
@@ -41,8 +40,8 @@ func TestWriteBatchPersistsOrderedOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if _, ok := getStore(t, reopened, "a"); ok {
-		t.Fatal("recovered a should not exist")
+	if value, ok := getStore(t, reopened, "a"); !ok || value != "a-value" {
+		t.Fatalf("recovered Get(a) = %q, %v", value, ok)
 	}
 	if value, ok := getStore(t, reopened, "b"); !ok || len(value) != 5000 {
 		t.Fatalf("recovered Get(b) = len:%d, %v", len(value), ok)

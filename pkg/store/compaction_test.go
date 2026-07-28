@@ -3,70 +3,11 @@ package store
 // 本文件验证全量 Compaction 的版本覆盖、墓碑回收、保留策略、原子发布和错误清理边界。
 
 import (
-	"errors"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/23jdd/SamKv/pkg/utils"
 )
-
-func TestCompactMergesVersionsDropsTombstonesAndDeletesInputs(t *testing.T) {
-	dir := t.TempDir()
-	options := DefaultOptions()
-	options.AutoCheckpoint = false
-	options.CompactionThreshold = 0
-
-	store, err := NewStoreMangerWithOptions(dir, options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	putStore(t, store, "a", "old-a")
-	putStore(t, store, "b", "old-b")
-	firstPath, err := store.Checkpoint()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// TODO: KV delete removed in logs-only mode
-	// if err := store.Delete("a"); err != nil {
-	// 	t.Fatal(err)
-	// }
-	putStore(t, store, "b", "new-b")
-	secondPath, err := store.Checkpoint()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := store.Compact()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.InputTables != 2 || result.OutputRecords != 1 {
-		t.Fatalf("Compact() result = %#v", result)
-	}
-	if _, ok := getStore(t, store, "a"); ok {
-		t.Fatal("a should stay deleted after compaction")
-	}
-	if value, ok := getStore(t, store, "b"); !ok || value != "new-b" {
-		t.Fatalf("Get(b) = %q, %v", value, ok)
-	}
-	for _, path := range []string{firstPath, secondPath} {
-		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("old SSTable %q still exists, error=%v", path, err)
-		}
-	}
-
-	manifest, exists, err := loadManifest(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exists || len(manifest.SSTables) != 1 || manifest.SSTables[0].Level != 1 {
-		t.Fatalf("compacted manifest = %#v", manifest)
-	}
-}
 
 func TestCompactAppliesTimeRetention(t *testing.T) {
 	dir := t.TempDir()

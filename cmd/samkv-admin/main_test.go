@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/23jdd/SamKv/pkg/store"
+	"github.com/23jdd/SamKv/pkg/utils"
 )
 
 func TestAdminCLIBackupVerifyAndRestore(t *testing.T) {
@@ -20,7 +22,12 @@ func TestAdminCLIBackupVerifyAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Put("key", "value"); err != nil {
+	now := time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)
+	if _, err := database.WriteLog(store.LogEntry{
+		Timestamp: now,
+		Labels:    []utils.Label{{Name: "test", Value: "backup"}},
+		Message:   []byte("hello"),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {
@@ -50,8 +57,16 @@ func TestAdminCLIBackupVerifyAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	if value, ok := restored.Get("key"); !ok || value != "value" {
-		t.Fatalf("Get(key) = %q, %v", value, ok)
+	logs, err := restored.Query(
+		now.Add(-time.Hour),
+		now.Add(time.Hour),
+		[]utils.Label{{Name: "test", Value: "backup"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || string(logs[0].Message) != "hello" {
+		t.Fatalf("Query() logs = %d, %q", len(logs), logs)
 	}
 }
 

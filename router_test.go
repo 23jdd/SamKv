@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/23jdd/SamKv/pkg/store"
+	"github.com/23jdd/SamKv/pkg/utils"
 	"github.com/gin-gonic/gin"
 )
 
@@ -64,7 +66,7 @@ type stubHealthStore struct {
 }
 
 func (s *stubHealthStore) BackgroundError() error { return s.backgroundErr }
-func (s *stubHealthStore) WriteLog(store.LogEntry) (uint64, error) { return 0, nil }
-func (s *stubHealthStore) WriteLogs([]store.LogEntry) ([]uint64, error) { return nil, nil }
-func (s *stubHealthStore) Query(_, _ any, _ any) ([]store.LogEntry, error) { return nil, nil }
-func (s *stubHealthStore) Stats() store.Stats { return store.Stats{} }
+func (s *stubHealthStore) WriteLog(store.LogEntry) (uint64, error)                     { return 0, nil }
+func (s *stubHealthStore) WriteLogs([]store.LogEntry) ([]uint64, error)                { return nil, nil }
+func (s *stubHealthStore) Query(time.Time, time.Time, []utils.Label) ([]store.LogEntry, error) { return nil, nil }
+func (s *stubHealthStore) Stats() store.Stats                                          { return store.Stats{} }

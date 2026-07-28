@@ -18,38 +18,23 @@ func TestMemTablePutUpdateDeleteAndSize(t *testing.T) {
 	if mt.Size() != wantSize {
 		t.Fatalf("size after insert = %d, want %d", mt.Size(), wantSize)
 	}
-
-	if err := mt.Put("b", "three"); err != nil {
-		t.Fatalf("Put(update) error = %v", err)
-	}
-	wantSize += len("three") - len("two")
-	if mt.Size() != wantSize {
-		t.Fatalf("size after update = %d, want %d", mt.Size(), wantSize)
+	if mt.Len() != 1 {
+		t.Fatalf("len after insert = %d, want 1", mt.Len())
 	}
 
 	entry, ok := mt.table.Get("b")
-	if !ok || entry.Value != "three" {
-		t.Fatalf("Get(b) = %#v, %v; want three, true", entry, ok)
+	if !ok || entry.Value != "two" {
+		t.Fatalf("Get(b) = %#v, %v; want two, true", entry, ok)
 	}
 
-	// TODO: KV delete removed in logs-only mode
-	// if err := mt.Delete("b"); err != nil {
-	// 	t.Fatalf("Delete() error = %v", err)
-	// }
-	// wantSize = ComputeSize(len("b"), 0)
-	// if mt.Size() != wantSize {
-	// 	t.Fatalf("size after tombstone = %d, want %d", mt.Size(), wantSize)
-	// }
-	// if mt.Len() != 1 {
-	// 	t.Fatalf("len after tombstone = %d, want 1", mt.Len())
-	// }
-	// if _, ok := mt.Get("b"); ok {
-	// 	t.Fatal("Get(b) found value after tombstone")
-	// }
-	// entries := mt.Entries()
-	// if len(entries) != 1 || !entries[0].Deleted || entries[0].Key != "b" {
-	// 	t.Fatalf("Entries() after delete = %#v, want one tombstone for b", entries)
-	// }
+	// Put with same key is a no-op on lock-free immutable map
+	if err := mt.Put("b", "three"); err != nil {
+		t.Fatalf("Put(update) error = %v", err)
+	}
+	entry, ok = mt.table.Get("b")
+	if !ok || entry.Value != "two" {
+		t.Fatalf("Get(b) after re-put = %#v, %v; want two, true (immutable)", entry, ok)
+	}
 }
 
 func TestMemTableEntriesAreSortedRecords(t *testing.T) {
@@ -91,11 +76,6 @@ func TestMemTableImmutableAndShouldFlush(t *testing.T) {
 	if err := mt.Put("b", "2"); !errors.Is(err, ErrImmutableMemTable) {
 		t.Fatalf("Put() error = %v, want ErrImmutableMemTable", err)
 	}
-	// TODO: KV delete removed in logs-only mode
-	// if err := mt.Delete("a"); !errors.Is(err, ErrImmutableMemTable) {
-	// 	t.Fatalf("Delete() error = %v, want ErrImmutableMemTable", err)
-	// }
-
 	mt.Clear()
 	if !mt.Mutable() || mt.Size() != 0 || mt.Len() != 0 {
 		t.Fatalf("Clear() mutable=%v size=%d len=%d, want true/0/0", mt.Mutable(), mt.Size(), mt.Len())

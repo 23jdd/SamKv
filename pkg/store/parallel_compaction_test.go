@@ -27,13 +27,6 @@ func TestParallelCompactionReadsReopenedTables(t *testing.T) {
 	for generation := 0; generation < generations; generation++ {
 		for index := 0; index < keyCount; index++ {
 			key := fmt.Sprintf("key-%04d", index)
-			if generation == generations-1 && index%10 == 0 {
-				// TODO: KV delete removed in logs-only mode
-				// if err := database.Delete(key); err != nil {
-				// 	t.Fatal(err)
-				// }
-				continue
-			}
 			if err := database.WriteBatch(NewBatch().Put(key, fmt.Sprintf("generation-%d-%s", generation, strings.Repeat("x", 64)))); err != nil {
 				t.Fatal(err)
 			}
@@ -84,12 +77,6 @@ func TestParallelCompactionReadsReopenedTables(t *testing.T) {
 	for index := 0; index < keyCount; index++ {
 		key := fmt.Sprintf("key-%04d", index)
 		value, found := getStore(t, reopened, key)
-		if index%10 == 0 {
-			if found {
-				t.Fatalf("deleted key %q was resurrected with %q", key, value)
-			}
-			continue
-		}
 		if !found || !strings.HasPrefix(value, "generation-3-") {
 			t.Fatalf("Get(%q) = %q, %v", key, value, found)
 		}
