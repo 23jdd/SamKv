@@ -256,3 +256,12 @@ func writeLogError(c *gin.Context, err error) {
 	}
 	writeStoreError(c, err)
 }
+
+func writeStoreError(c *gin.Context, err error) {
+	_ = c.Error(err)
+	if errors.Is(err, store.ErrStoreClosed) || errors.Is(err, store.ErrBackgroundFailure) {
+		writeJSONError(c, http.StatusServiceUnavailable, "store unavailable")
+		return
+	}
+	writeJSONError(c, http.StatusInternalServerError, "store operation failed")
+}

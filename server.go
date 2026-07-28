@@ -28,9 +28,9 @@ type Server struct {
 	httpServer *http.Server
 }
 
-// NewServer 创建一个使用 database 处理 KV 请求的 HTTP Server。
+// NewServer 创建一个使用 database 处理日志请求的 HTTP Server。
 // port 可为 0 但 Run 不会回填系统分配端口；负数或大于 65535 会 panic，database 为 nil 也会 panic。
-func NewServer(port int, address string, database KVStore) *Server {
+func NewServer(port int, address string, database logRouterStore) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	if port < 0 || port > 65535 {
 		panic("server: port must be between 0 and 65535")
