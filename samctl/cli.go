@@ -1,6 +1,6 @@
 package main
 
-// 本文件实现 samctl 命令和带超时的 SamKV HTTP 客户端，支持 KV、结构化日志、健康检查与指标。
+// 本文件实现 samctl 命令和带超时的 SamKV HTTP 客户端，支持结构化日志、健康检查与指标。
 // 响应体最多读取 64 MiB；非 2xx 响应转换为可用 errors.As 检查的 APIError。
 
 import (
@@ -94,45 +94,6 @@ func NewClient(address string, port int, timeout time.Duration) (*Client, error)
 	}, nil
 }
 
-func (c *Client) Get(ctx context.Context, key string) (string, error) {
-	if key == "" {
-		return "", fmt.Errorf("%w: key is required", ErrArgsNotEnough)
-	}
-	body, err := c.request(ctx, http.MethodGet, c.keyURL(key), nil)
-	if err != nil {
-		return "", err
-	}
-	var response struct {
-		Value string `json:"value"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return "", fmt.Errorf("decode GET response: %w", err)
-	}
-	return response.Value, nil
-}
-
-func (c *Client) Put(ctx context.Context, key, value string) error {
-	if key == "" {
-		return fmt.Errorf("%w: key is required", ErrArgsNotEnough)
-	}
-	body, err := json.Marshal(struct {
-		Value string `json:"value"`
-	}{Value: value})
-	if err != nil {
-		return err
-	}
-	_, err = c.request(ctx, http.MethodPut, c.keyURL(key), bytes.NewReader(body))
-	return err
-}
-
-func (c *Client) Delete(ctx context.Context, key string) error {
-	if key == "" {
-		return fmt.Errorf("%w: key is required", ErrArgsNotEnough)
-	}
-	_, err := c.request(ctx, http.MethodDelete, c.keyURL(key), nil)
-	return err
-}
-
 func (c *Client) Health(ctx context.Context) (string, error) {
 	body, err := c.request(ctx, http.MethodGet, c.baseURL+"/healthz", nil)
 	if err != nil {
@@ -220,10 +181,6 @@ func (c *Client) Metrics(ctx context.Context) (string, error) {
 	return string(body), nil
 }
 
-func (c *Client) keyURL(key string) string {
-	return c.baseURL + "/kv/" + url.PathEscape(key)
-}
-
 func (c *Client) request(ctx context.Context, method, endpoint string, body io.Reader) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
@@ -272,9 +229,6 @@ func newAPIError(response *http.Response, body []byte) error {
 
 type cliConfig struct {
 	mode       string
-	key        string
-	value      string
-	valueSet   bool
 	address    string
 	port       int
 	timeout    time.Duration
@@ -355,25 +309,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 	ctx := context.Background()
 
 	switch config.mode {
-	case "get":
-		value, err := client.Get(ctx, config.key)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(stdout, value)
-		return err
-	case "put":
-		if err := client.Put(ctx, config.key, config.value); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintln(stdout, "ok")
-		return err
-	case "del":
-		if err := client.Delete(ctx, config.key); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintln(stdout, "ok")
-		return err
 	case "health":
 		status, err := client.Health(ctx)
 		if err != nil {
@@ -436,11 +371,8 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 
 	flags := flag.NewFlagSet("samkv-cli", flag.ContinueOnError)
 	flags.SetOutput(output)
-	var value optionalString
 	var message optionalString
-	flags.StringVar(&config.mode, "m", config.mode, "mode: get, put, del, health, log, log-batch, query, metrics, help")
-	flags.StringVar(&config.key, "k", "", "key")
-	flags.Var(&value, "v", "value; empty string is allowed")
+	flags.StringVar(&config.mode, "m", config.mode, "mode: health, log, log-batch, query, metrics, help")
 	flags.Var(&message, "message", "log message; empty string is allowed")
 	flags.Var(&config.labels, "label", "log label as name=value; repeatable")
 	flags.StringVar(&config.timestamp, "timestamp", "", "log timestamp in RFC3339 or RFC3339Nano")
@@ -474,57 +406,22 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 			config.query = remaining[0]
 			remaining = remaining[1:]
 		}
-	default:
-		if config.key == "" && len(remaining) > 0 {
-			config.key = remaining[0]
-			remaining = remaining[1:]
-		}
-		if !value.set && len(remaining) > 0 {
-			value.value = remaining[0]
-			value.set = true
-			remaining = remaining[1:]
-		}
 	}
 	if len(remaining) > 0 {
 		return cliConfig{}, fmt.Errorf("cli: unexpected arguments: %s", strings.Join(remaining, " "))
 	}
-	config.value = value.value
-	config.valueSet = value.set
 	if config.mode == "" {
 		config.mode = "help"
 	}
 
 	switch config.mode {
 	case "help":
-		if config.key != "" || config.valueSet {
-			return cliConfig{}, errors.New("cli: help does not accept key or value")
-		}
-	case "get", "del":
-		if config.key == "" {
-			return cliConfig{}, fmt.Errorf("%w: key is required for %s", ErrArgsNotEnough, config.mode)
-		}
-	case "put":
-		if config.key == "" {
-			return cliConfig{}, fmt.Errorf("%w: key is required for put", ErrArgsNotEnough)
-		}
-		if !config.valueSet {
-			return cliConfig{}, fmt.Errorf("%w: value is required for put", ErrArgsNotEnough)
-		}
 	case "health":
-		if config.key != "" || config.valueSet {
-			return cliConfig{}, errors.New("cli: health does not accept key or value")
-		}
 	case "log":
-		if config.key != "" || config.valueSet {
-			return cliConfig{}, errors.New("cli: log does not accept key or value")
-		}
 		if !config.messageSet {
 			return cliConfig{}, fmt.Errorf("%w: message is required for log", ErrArgsNotEnough)
 		}
 	case "log-batch":
-		if config.key != "" || config.valueSet {
-			return cliConfig{}, errors.New("cli: log-batch does not accept key or value")
-		}
 		if config.batchFile == "" {
 			return cliConfig{}, fmt.Errorf("%w: file is required for log-batch", ErrArgsNotEnough)
 		}
@@ -532,13 +429,7 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 		if config.query == "" {
 			return cliConfig{}, fmt.Errorf("%w: query is required for query", ErrArgsNotEnough)
 		}
-		if config.key != "" || config.valueSet {
-			return cliConfig{}, errors.New("cli: query does not accept key or value")
-		}
 	case "metrics":
-		if config.key != "" || config.valueSet {
-			return cliConfig{}, errors.New("cli: metrics does not accept key or value")
-		}
 	default:
 		return cliConfig{}, fmt.Errorf("%w: %q", ErrInvalidMode, config.mode)
 	}
@@ -547,8 +438,6 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 
 func normalizeMode(mode string) string {
 	switch strings.ToLower(mode) {
-	case "delete":
-		return "del"
 	case "logs":
 		return "log"
 	default:
@@ -560,12 +449,6 @@ func writeCLIUsage(output io.Writer, flags *flag.FlagSet) {
 	fmt.Fprintln(output, "Usage / 用法:")
 	fmt.Fprintln(output, "  samctl help")
 	fmt.Fprintln(output, "      显示帮助信息")
-	fmt.Fprintln(output, "  samctl get [-a address] [-p port] <key>")
-	fmt.Fprintln(output, "      读取 KV 键")
-	fmt.Fprintln(output, "  samctl put [-a address] [-p port] <key> <value>")
-	fmt.Fprintln(output, "      写入 KV 键值")
-	fmt.Fprintln(output, "  samctl del [-a address] [-p port] <key>")
-	fmt.Fprintln(output, "      删除 KV 键")
 	fmt.Fprintln(output, "  samctl health [-a address] [-p port]")
 	fmt.Fprintln(output, "      检查服务健康状态")
 	fmt.Fprintln(output, "  samctl log [-label name=value] [-timestamp time] [-sequence n] -message <message>")
@@ -576,7 +459,7 @@ func writeCLIUsage(output io.Writer, flags *flag.FlagSet) {
 	fmt.Fprintln(output, "      使用 QueryFormat 查询结构化日志")
 	fmt.Fprintln(output, "  samctl metrics [-a address] [-p port]")
 	fmt.Fprintln(output, "      输出 Prometheus 指标")
-	fmt.Fprintln(output, "  samctl -m <mode> -k <key> [-v value]")
+	fmt.Fprintln(output, "  samctl -m <mode>")
 	fmt.Fprintln(output, "      兼容旧的 -m 调用方式")
 	if flags != nil {
 		fmt.Fprintln(output)

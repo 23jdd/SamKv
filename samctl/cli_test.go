@@ -1,7 +1,5 @@
 package main
 
-// 本文件验证 CLI 参数兼容、空值、标签、批量文件、URL 转义、超时、响应上限和 API 错误。
-
 import (
 	"context"
 	"encoding/json"
@@ -19,24 +17,11 @@ import (
 	"time"
 )
 
-func TestClientPutGetDeleteAndHealth(t *testing.T) {
-	server := newTestKVServer(t)
+func TestClientHealth(t *testing.T) {
+	server := newTestLogServer(t)
 	client := newTestClient(t, server.URL)
 	ctx := context.Background()
 
-	if err := client.Put(ctx, "services/api?env=prod#blue", "ready"); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
-	value, err := client.Get(ctx, "services/api?env=prod#blue")
-	if err != nil {
-		t.Fatalf("Get() error = %v", err)
-	}
-	if value != "ready" {
-		t.Fatalf("Get()=%q, want ready", value)
-	}
-	if err := client.Delete(ctx, "services/api?env=prod#blue"); err != nil {
-		t.Fatalf("Delete() error = %v", err)
-	}
 	status, err := client.Health(ctx)
 	if err != nil {
 		t.Fatalf("Health() error = %v", err)
@@ -46,24 +31,8 @@ func TestClientPutGetDeleteAndHealth(t *testing.T) {
 	}
 }
 
-func TestClientAllowsEmptyValue(t *testing.T) {
-	server := newTestKVServer(t)
-	client := newTestClient(t, server.URL)
-
-	if err := client.Put(context.Background(), "empty", ""); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
-	value, err := client.Get(context.Background(), "empty")
-	if err != nil {
-		t.Fatalf("Get() error = %v", err)
-	}
-	if value != "" {
-		t.Fatalf("Get()=%q, want empty", value)
-	}
-}
-
 func TestClientLogBatchQueryAndMetrics(t *testing.T) {
-	server := newTestKVServer(t)
+	server := newTestLogServer(t)
 	client := newTestClient(t, server.URL)
 	ctx := context.Background()
 
@@ -110,44 +79,34 @@ func TestClientReturnsAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = io.WriteString(w, `{"error":"key not found"}`)
+		_, _ = io.WriteString(w, `{"error":"route not found"}`)
 	}))
 	defer server.Close()
 
 	client := newTestClient(t, server.URL)
-	_, err := client.Get(context.Background(), "missing")
+	_, err := client.Health(context.Background())
 	var apiError *APIError
 	if !errors.As(err, &apiError) {
 		t.Fatalf("error=%v, want APIError", err)
 	}
-	if apiError.StatusCode != http.StatusNotFound || apiError.Message != "key not found" {
+	if apiError.StatusCode != http.StatusNotFound || apiError.Message != "route not found" {
 		t.Fatalf("APIError=%#v", apiError)
 	}
 }
 
 func TestRunSupportsSubcommandsAndFlags(t *testing.T) {
-	server := newTestKVServer(t)
+	server := newTestLogServer(t)
 	address, port := testServerAddress(t, server.URL)
 	connectionFlags := []string{"-a", address, "-p", strconv.Itoa(port)}
 
 	var stdout strings.Builder
-	putArgs := append([]string{"put"}, connectionFlags...)
-	putArgs = append(putArgs, "cli/key", "value")
-	if err := run(putArgs, &stdout, io.Discard); err != nil {
-		t.Fatalf("run(put) error = %v", err)
+	logArgs := append([]string{"log"}, connectionFlags...)
+	logArgs = append(logArgs, "-label", "app=api", "-message", "request started")
+	if err := run(logArgs, &stdout, io.Discard); err != nil {
+		t.Fatalf("run(log) error = %v", err)
 	}
-	if stdout.String() != "ok\n" {
-		t.Fatalf("put output=%q", stdout.String())
-	}
-
-	stdout.Reset()
-	getArgs := append([]string{"get"}, connectionFlags...)
-	getArgs = append(getArgs, "cli/key")
-	if err := run(getArgs, &stdout, io.Discard); err != nil {
-		t.Fatalf("run(get) error = %v", err)
-	}
-	if stdout.String() != "value\n" {
-		t.Fatalf("get output=%q", stdout.String())
+	if stdout.String() != "1\n" {
+		t.Fatalf("log output=%q", stdout.String())
 	}
 
 	stdout.Reset()
@@ -161,7 +120,7 @@ func TestRunSupportsSubcommandsAndFlags(t *testing.T) {
 }
 
 func TestRunSupportsLogQueryBatchAndMetrics(t *testing.T) {
-	server := newTestKVServer(t)
+	server := newTestLogServer(t)
 	address, port := testServerAddress(t, server.URL)
 	connectionFlags := []string{"-a", address, "-p", strconv.Itoa(port)}
 
@@ -231,12 +190,10 @@ func TestRunSupportsHelp(t *testing.T) {
 }
 func TestParseCLIConfigRequiresArguments(t *testing.T) {
 	tests := [][]string{
-		{"get"},
-		{"put", "key"},
-		{"health", "unexpected"},
 		{"log"},
 		{"log-batch"},
 		{"query"},
+		{"health", "unexpected"},
 		{"metrics", "unexpected"},
 		{"help", "unexpected"},
 		{"unknown"},
@@ -245,16 +202,6 @@ func TestParseCLIConfigRequiresArguments(t *testing.T) {
 		if _, err := parseCLIConfig(args, io.Discard); err == nil {
 			t.Fatalf("parseCLIConfig(%q) succeeded", args)
 		}
-	}
-}
-
-func TestParseCLIConfigAcceptsExplicitEmptyValue(t *testing.T) {
-	config, err := parseCLIConfig([]string{"put", "key", ""}, io.Discard)
-	if err != nil {
-		t.Fatalf("parseCLIConfig() error = %v", err)
-	}
-	if !config.valueSet || config.value != "" {
-		t.Fatalf("valueSet=%v value=%q", config.valueSet, config.value)
 	}
 }
 
@@ -295,9 +242,8 @@ func testServerAddress(t *testing.T, rawURL string) (string, int) {
 	return host, port
 }
 
-func newTestKVServer(t *testing.T) *httptest.Server {
+func newTestLogServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	values := make(map[string]string)
 	var sequence uint64
 	logs := make([]LogWrite, 0)
 	now := time.Date(2026, 7, 24, 10, 30, 0, 0, time.UTC)
@@ -383,39 +329,8 @@ func newTestKVServer(t *testing.T) *httptest.Server {
 				Truncated: false,
 			})
 			return
-		}
-
-		if !strings.HasPrefix(request.URL.Path, "/kv/") {
-			http.NotFound(w, request)
-			return
-		}
-		key := strings.TrimPrefix(request.URL.Path, "/kv/")
-		switch request.Method {
-		case http.MethodPut:
-			var body struct {
-				Value string `json:"value"`
-			}
-			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			values[key] = body.Value
-			w.WriteHeader(http.StatusNoContent)
-		case http.MethodGet:
-			value, ok := values[key]
-			if !ok {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusNotFound)
-				_, _ = io.WriteString(w, `{"error":"key not found"}`)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"key": key, "value": value})
-		case http.MethodDelete:
-			delete(values, key)
-			w.WriteHeader(http.StatusNoContent)
 		default:
-			http.Error(w, fmt.Sprintf("unsupported method %s", request.Method), http.StatusMethodNotAllowed)
+			http.NotFound(w, request)
 		}
 	}))
 	t.Cleanup(server.Close)
