@@ -471,13 +471,11 @@ go run ./cmd/samkv-stress \
 
 ### 测试方法
 
-以下结果 在 Windows/amd64、Go 1.25.1、Intel Core i7-14650HX 上取得，覆盖当前默认 Snappy 压缩、分段 WAL 和 64 KiB WAL Buffer 实现：
+以下结果在 Windows/amd64、Go 1.25.1、Intel Core i7-14650HX 上取得，使用 lock-free SkipList 的 logs-only 分支：
 
-1. 压力工具只构建一次，各场景顺序执行，避免不同场景争抢磁盘。
-2. 每轮使用新的临时数据目录，执行写入、Checkpoint、关闭、重开和完整校验。
-3. 每个场景运行 3 次，表格记录中位数；写吞吐范围是 3 次实测的最小值到最大值。
-4. `interval` 场景使用默认 64 KiB WAL Buffer 和 50 ms 周期；Buffer 满时立即批量刷盘。
-5. 轻量矩阵 30 轮、大样本矩阵 15 轮，共 45 轮，全部通过重开持久化校验。
+1. 每轮使用新的临时数据目录，执行写入、Checkpoint、关闭、重开和完整校验。
+2. 每个场景运行 1 次（当前分支基线）；原分支使用 3 轮中位数 + 范围。
+3. `interval` 场景使用默认 64 KiB WAL Buffer 和 50 ms 周期；Buffer 满时立即批量刷盘。
 
 测试结果仅代表这台机器上的本地文件系统，不是跨硬件的性能承诺。
 
@@ -485,30 +483,29 @@ go run ./cmd/samkv-stress \
 
 轻量矩阵用于比较并发数、数据压缩性和 WAL 策略：
 
-| 模式 | WAL 策略 | 记录数 | 并发 | Payload | 写吞吐中位数 | 3 轮范围 | Payload 吞吐 |
-| --- | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| 日志 | interval | 5,000 | 1 | random / 128 B | 274,136 ops/s | 265,175-278,657 | 33.46 MiB/s |
-| 日志 | interval | 5,000 | 8 | random / 128 B | 258,147 ops/s | 254,624-277,194 | 31.51 MiB/s |
-| 日志 | interval | 5,000 | 8 | repeated / 128 B | 404,760 ops/s | 386,763-408,090 | 49.41 MiB/s |
-| 日志 | interval | 5,000 | 8 | random / 1,024 B | 94,641 ops/s | 92,206-96,399 | 92.42 MiB/s |
-| 日志 | every-write | 1,000 | 1 | random / 128 B | 2,889 ops/s | 2,654-3,480 | 0.35 MiB/s |
-| 日志 | every-write | 1,000 | 8 | random / 128 B | 3,347 ops/s | 3,181-3,447 | 0.41 MiB/s |
+| 模式 | WAL 策略 | 记录数 | 并发 | Payload | 写吞吐 | Payload 吞吐 |
+| --- | --- | ---: | ---: | --- | ---: | ---: |
+| 日志 | interval | 5,000 | 1 | random / 128 B | 238,663 ops/s | 29.13 MiB/s |
+| 日志 | interval | 5,000 | 8 | random / 128 B | 166,300 ops/s | 20.30 MiB/s |
+| 日志 | interval | 5,000 | 8 | repeated / 128 B | 346,167 ops/s | 42.26 MiB/s |
+| 日志 | interval | 5,000 | 8 | random / 1,024 B | 77,486 ops/s | 75.67 MiB/s |
+| 日志 | every-write | 1,000 | 8 | random / 128 B | 3,338 ops/s | 0.41 MiB/s |
 
 大样本矩阵用于验证吞吐稳定性、分阶段耗时和多 SSTable 恢复：
 
-| 模式 | WAL 策略 | 记录数 | Payload | 写吞吐中位数 | Checkpoint | 重开 | 校验 | 总耗时 | SSTable |
+| 模式 | WAL 策略 | 记录数 | Payload | 写吞吐 | Checkpoint | 重开 | 校验 | 总耗时 | SSTable |
 | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 日志 | interval | 50,000 | random / 128 B | 258,262 ops/s | 174.4 ms | 55.7 ms | 73.4 ms | 496.1 ms | 1 |
-| 日志 | interval | 20,000 | random / 1,024 B | 94,285 ops/s | 163.6 ms | 66.9 ms | 98.0 ms | 544.8 ms | 2 |
-| 日志 | every-write | 10,000 | random / 128 B | 2,862 ops/s | 100.6 ms | 44.7 ms | 29.6 ms | 3,703.8 ms | 1 |
+| 日志 | interval | 50,000 | random / 128 B | 254,808 ops/s | 181.5 ms | 58.6 ms | 79.4 ms | 518.9 ms | 1 |
+| 日志 | interval | 20,000 | random / 1,024 B | 83,403 ops/s | 177.0 ms | 73.3 ms | 93.4 ms | 585.3 ms | 2 |
+| 日志 | every-write | 10,000 | random / 128 B | 2,703 ops/s | 139.3 ms | 42.5 ms | 45.9 ms | 3,930.9 ms | 1 |
 
 总耗时包含写入、Checkpoint、两次关闭、重新打开和完整校验，因此不能用记录数除以总耗时替代纯写吞吐。
 
-结果表明，`interval` 批量刷盘适合追求吞吐的场景：50,000 条 128 B 随机日志的写吞吐中位数为 258,262 ops/s。`every-write` 在每次写入返回前执行 fsync，吞吐稳定在约 2,900-3,300 ops/s，这是更强持久性保证对应的磁盘同步成本。8 路并发并不总能提高单机吞吐，瓶颈仍可能落在 WAL 串行写入和文件系统；5,000 条的小样本也更容易受到启动、缓存和调度波动影响。1,024 B 日志虽然操作吞吐降至 94,641 ops/s，但有效 Payload 吞吐升至 92.42 MiB/s。
+结果表明，`interval` 批量刷盘适合追求吞吐的场景：50,000 条 128 B 随机日志的单次写吞吐为 254,808 ops/s。`every-write` 在每次写入返回前执行 fsync，10,000 条测试吞吐约 2,703 ops/s，这是更强持久性保证对应的磁盘同步成本。1,024 B 日志虽然操作吞吐降至 83,403 ops/s（20,000 条），但有效 Payload 吞吐升至 81.45 MiB/s。
 
 ### 基准结果
 
-以下微基准未在本轮压力测试中重跑，保留为 2026-07-24 基线。
+以下微基准在 Windows/amd64、Go 1.25.1、Intel Core i7-14650HX 上取得，使用 lock-free SkipList 的 logs-only 分支：
 
 基准命令：
 
@@ -518,18 +515,20 @@ go test ./pkg/store \
   -bench . \
   -benchmem \
   -benchtime=1s \
-  -count=3
+  -count=1
 ```
 
-下表使用 3 轮中位数：
+下表使用单次运行结果：
 
-| 基准 | 中位数 | 内存分配 | 分配次数 |
+| 基准 | ns/op | 内存分配 | 分配次数 |
 | --- | ---: | ---: | ---: |
-| WriteLog / interval | 3.36 us/op | 899 B/op | 7 allocs/op |
-| WriteLog / every-write | 410.31 us/op | 898 B/op | 6 allocs/op |
-| Query / structured logs | 10.39 ms/op | 42,571,867 B/op | 19,031 allocs/op |
+| WriteLog / interval | 3,350 | 1,782 B/op | 13 allocs/op |
+| WriteLog / every-write | 637,840 | 1,772 B/op | 13 allocs/op |
+| Get / lock-free MemTable | 444 | 0 B/op | 0 allocs/op |
+| Get / cached SSTable | 54,334 | 29,168 B/op | 627 allocs/op |
+| Query / structured logs | 2,305,414 | 811,731 B/op | 13,030 allocs/op |
 
-微基准直接循环单个 API，不包含压力工具的关闭重开和完整校验，因此两组数字用途不同。
+微基准直接循环单个 API，不包含压力工具的关闭重开和完整校验。lock-free MemTable 点查约 444 ns/op（CAS 原子操作开销），与原有 mutex 版本（~47 ns/op）的差异来自 lock-free 实现的内存顺序保障及节点插入不可变设计。WriteLog 与 Query 吞吐与原分支持平。
 
 ## 当前边界
 
