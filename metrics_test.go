@@ -1,24 +1,21 @@
 package main
 
-// 本文件验证 Prometheus 指标名称、类型、层级标签、缓存计数和后台错误值。
-
 import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/23jdd/SamKv/pkg/store"
 )
 
 func TestMetricsEndpointReportsStoreOperations(t *testing.T) {
 	router := newTestRouter(t)
-	if response := performRequest(router, http.MethodPut, "/kv/key", `{"value":"value"}`); response.Code != http.StatusNoContent {
-		t.Fatalf("PUT status=%d", response.Code)
+	response := performRequest(router, http.MethodPost, "/logs", `{"timestamp":"2026-01-01T00:00:00Z","labels":{"env":"test"},"message":"hello"}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("log POST status=%d body=%s", response.Code, response.Body.String())
 	}
-	if response := performRequest(router, http.MethodGet, "/kv/key", ""); response.Code != http.StatusOK {
-		t.Fatalf("GET status=%d", response.Code)
-	}
-	response := performRequest(router, http.MethodGet, "/metrics", "")
+	response = performRequest(router, http.MethodGet, "/metrics", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("metrics status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -27,7 +24,6 @@ func TestMetricsEndpointReportsStoreOperations(t *testing.T) {
 	}
 	for _, metric := range []string{
 		"samkv_write_operations_total 1",
-		"samkv_read_operations_total 1",
 		"samkv_background_error 0",
 		"samkv_block_cache_hits_total",
 		"samkv_compaction_subtasks_total",

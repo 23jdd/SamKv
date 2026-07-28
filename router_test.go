@@ -1,10 +1,7 @@
 package main
 
-// 本文件验证 KV 成功路径、严格 JSON、大小限制、缺失 key、方法错误和健康检查。
-
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -14,88 +11,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestKVRouterPutGetDelete(t *testing.T) {
-	router := newTestRouter(t)
-
-	response := performRequest(router, http.MethodPut, "/kv/services/api", `{"value":"ready"}`)
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("PUT status=%d body=%s", response.Code, response.Body.String())
-	}
-
-	response = performRequest(router, http.MethodGet, "/kv/services/api", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("GET status=%d body=%s", response.Code, response.Body.String())
-	}
-	var got kvResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Key != "services/api" || got.Value != "ready" {
-		t.Fatalf("GET response=%#v", got)
-	}
-
-	response = performRequest(router, http.MethodDelete, "/kv/services/api", "")
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("DELETE status=%d body=%s", response.Code, response.Body.String())
-	}
-
-	response = performRequest(router, http.MethodGet, "/kv/services/api", "")
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("GET deleted key status=%d body=%s", response.Code, response.Body.String())
-	}
-}
-
-func TestKVRouterAllowsEmptyValue(t *testing.T) {
-	router := newTestRouter(t)
-
-	response := performRequest(router, http.MethodPut, "/kv/empty", `{"value":""}`)
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("PUT status=%d body=%s", response.Code, response.Body.String())
-	}
-	response = performRequest(router, http.MethodGet, "/kv/empty", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("GET status=%d body=%s", response.Code, response.Body.String())
-	}
-	var got kvResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Value != "" {
-		t.Fatalf("GET value=%q, want empty", got.Value)
-	}
-}
-
-func TestKVRouterRejectsInvalidRequests(t *testing.T) {
-	router := newTestRouter(t)
-	tests := []struct {
-		name   string
-		path   string
-		body   string
-		status int
-	}{
-		{name: "missing key", path: "/kv", body: `{"value":"x"}`, status: http.StatusBadRequest},
-		{name: "missing value", path: "/kv/key", body: `{}`, status: http.StatusBadRequest},
-		{name: "unknown field", path: "/kv/key", body: `{"value":"x","extra":true}`, status: http.StatusBadRequest},
-		{name: "malformed JSON", path: "/kv/key", body: `{"value":`, status: http.StatusBadRequest},
-		{name: "multiple objects", path: "/kv/key", body: `{"value":"x"}{"value":"y"}`, status: http.StatusBadRequest},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			response := performRequest(router, http.MethodPut, test.path, test.body)
-			if response.Code != test.status {
-				t.Fatalf("status=%d body=%s, want %d", response.Code, response.Body.String(), test.status)
-			}
-		})
-	}
-}
-
 func TestHealthReportsBackgroundFailure(t *testing.T) {
-	database := &stubKVStore{backgroundErr: errors.New("flush failed")}
+	database := &stubHealthStore{backgroundErr: errors.New("flush failed")}
 	router := NewRouter(database)
 
 	response := performRequest(router, http.MethodGet, "/healthz", "")
 	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestHealthReportsOK(t *testing.T) {
+	database := &stubHealthStore{}
+	router := NewRouter(database)
+
+	response := performRequest(router, http.MethodGet, "/healthz", "")
+	if response.Code != http.StatusOK {
 		t.Fatalf("health status=%d body=%s", response.Code, response.Body.String())
 	}
 }
@@ -128,11 +59,12 @@ func performRequest(handler http.Handler, method, path, body string) *httptest.R
 	return response
 }
 
-type stubKVStore struct {
+type stubHealthStore struct {
 	backgroundErr error
 }
 
-func (s *stubKVStore) Put(string, string) error  { return nil }
-func (s *stubKVStore) Get(string) (string, bool) { return "", false }
-func (s *stubKVStore) Delete(string) error       { return nil }
-func (s *stubKVStore) BackgroundError() error    { return s.backgroundErr }
+func (s *stubHealthStore) BackgroundError() error { return s.backgroundErr }
+func (s *stubHealthStore) WriteLog(store.LogEntry) (uint64, error) { return 0, nil }
+func (s *stubHealthStore) WriteLogs([]store.LogEntry) ([]uint64, error) { return nil, nil }
+func (s *stubHealthStore) Query(_, _ any, _ any) ([]store.LogEntry, error) { return nil, nil }
+func (s *stubHealthStore) Stats() store.Stats { return store.Stats{} }
