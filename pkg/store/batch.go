@@ -1,6 +1,6 @@
 package store
 
-// 本文件实现按调用顺序编码的批量 Put/Delete。
+// 本文件实现按调用顺序编码的批量 Put。
 // Batch 在提交前由调用方独占构建，WriteBatch 再一次持有 Store 写锁完成 WAL 追加和内存应用。
 
 import (
@@ -12,17 +12,14 @@ import (
 // ErrInvalidBatch 表示批次包含空 key、未知操作类型或无法编码的 WAL 记录。
 var ErrInvalidBatch = errors.New("store: invalid batch")
 
-// BatchOperationType 区分批量写入和删除；零值及未知值无效。
+// BatchOperationType 区分批量写入；零值及未知值无效。
 type BatchOperationType uint8
 
 const (
-	// BatchPut 写入或覆盖一个 key/value。
 	BatchPut BatchOperationType = iota + 1
-	// BatchDelete 写入一个 key 墓碑。
-	BatchDelete
 )
 
-// BatchOperation 是批量写中的单个 Put 或 Delete。
+// BatchOperation 是批量写中的单个 Put。
 type BatchOperation struct {
 	Type  BatchOperationType
 	Key   string
@@ -43,12 +40,6 @@ func NewBatch() *Batch {
 // Put 在批次尾部追加写入并返回自身，便于链式构建；空 key 会在 WriteBatch 时被拒绝。
 func (batch *Batch) Put(key, value string) *Batch {
 	batch.operations = append(batch.operations, BatchOperation{Type: BatchPut, Key: key, Value: value})
-	return batch
-}
-
-// Delete 在批次尾部追加墓碑并返回自身；空 key 会在 WriteBatch 时被拒绝。
-func (batch *Batch) Delete(key string) *Batch {
-	batch.operations = append(batch.operations, BatchOperation{Type: BatchDelete, Key: key})
 	return batch
 }
 
@@ -76,8 +67,6 @@ func (st *StoreManger) WriteBatch(batch *Batch) error {
 		switch operation.Type {
 		case BatchPut:
 			record = wal.PutRecord([]byte(operation.Key), []byte(operation.Value))
-		case BatchDelete:
-			record = wal.DeleteRecord([]byte(operation.Key))
 		default:
 			return ErrInvalidBatch
 		}
@@ -102,10 +91,6 @@ func (st *StoreManger) WriteBatch(batch *Batch) error {
 		switch walRecords[i].Type {
 		case wal.RecordPut:
 			if err := st.mem.Put(operation.Key, operation.Value); err != nil {
-				return err
-			}
-		case wal.RecordDelete:
-			if err := st.mem.Delete(operation.Key); err != nil {
 				return err
 			}
 		}

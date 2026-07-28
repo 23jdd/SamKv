@@ -1,6 +1,6 @@
 package store
 
-// 本文件组合 MemTable、WAL、SSTable、Manifest 和后台任务，提供 Store 的生命周期及普通 KV API。
+// 本文件组合 MemTable、WAL、SSTable、Manifest 和后台任务，提供 Store 的生命周期和日志写入 API。
 // 同一实例可供多个 goroutine 使用；调用 Close 后所有读写和维护操作均不应继续使用。
 
 import (
@@ -144,92 +144,6 @@ func NewStoreMangerWithOptions(dir string, options Options) (*StoreManger, error
 	}
 	st.mu.Unlock()
 	return st, nil
-}
-
-// Put 先写 WAL，再写活动 MemTable。
-func (st *StoreManger) Put(key string, val string) error {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	if err := st.checkWritableLocked(); err != nil {
-		return err
-	}
-	if err := st.wm.AppendRecord(wal.PutRecord([]byte(key), []byte(val))); err != nil {
-		return err
-	}
-	if err := st.mem.Put(key, val); err != nil {
-		return err
-	}
-	st.stats.writeOperations.Add(1)
-	st.maybeFreezeLocked()
-	return nil
-}
-
-// Get 按“活动表 -> 新只读表 -> 旧只读表 -> 新 SSTable -> 旧 SSTable”的顺序查询。
-// 兼容旧 API；发生磁盘读取错误时返回未找到，并通过 BackgroundError 暴露故障。
-func (st *StoreManger) Get(key string) (string, bool) {
-	value, found, _ := st.GetWithError(key)
-	return value, found
-}
-
-// GetWithError 返回点查询结果，并保留 SSTable 校验或读取错误。
-func (st *StoreManger) GetWithError(key string) (string, bool, error) {
-	st.stats.readOperations.Add(1)
-	st.mu.RLock()
-
-	if entry, ok := st.mem.GetEntry(key); ok {
-		st.mu.RUnlock()
-		if entry.Deleted {
-			return "", false, nil
-		}
-		return entry.Value, true, nil
-	}
-	for i := len(st.immutables) - 1; i >= 0; i-- {
-		if entry, ok := st.immutables[i].GetEntry(key); ok {
-			st.mu.RUnlock()
-			if entry.Deleted {
-				return "", false, nil
-			}
-			return entry.Value, true, nil
-		}
-	}
-	for i := len(st.sstables) - 1; i >= 0; i-- {
-		record, ok, err := st.sstables[i].GetRecord(key)
-		if err != nil {
-			st.mu.RUnlock()
-			st.setBackgroundError(err)
-			return "", false, err
-		}
-		if !ok {
-			continue
-		}
-		st.mu.RUnlock()
-		if record.Deleted {
-			return "", false, nil
-		}
-		return record.Val, true, nil
-	}
-	st.mu.RUnlock()
-	return "", false, nil
-}
-
-// Delete 写入墓碑，用于覆盖所有旧层级中的同名 key。
-func (st *StoreManger) Delete(key string) error {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	if err := st.checkWritableLocked(); err != nil {
-		return err
-	}
-	if err := st.wm.AppendRecord(wal.DeleteRecord([]byte(key))); err != nil {
-		return err
-	}
-	if err := st.mem.Delete(key); err != nil {
-		return err
-	}
-	st.stats.writeOperations.Add(1)
-	st.maybeFreezeLocked()
-	return nil
 }
 
 // BackgroundError 返回最近一次后台刷盘或 Compaction 错误。

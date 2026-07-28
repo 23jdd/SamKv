@@ -85,7 +85,7 @@ func applyWALRecord(mem *MemTable, record *wal.Record) error {
 	case wal.RecordPut:
 		return mem.Put(string(record.Key), string(record.Value))
 	case wal.RecordDelete:
-		return mem.Delete(string(record.Key))
+		return nil
 	default:
 		return wal.ErrInvalidRecord
 	}
