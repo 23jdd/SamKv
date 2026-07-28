@@ -1,6 +1,6 @@
 package main
 
-// 本文件运行可配置的 KV/日志并发写入、Checkpoint、重启读取和完整性验证压力测试。
+// 本文件运行可配置的日志并发写入、Checkpoint、重启读取和完整性验证压力测试。
 // 结果只适用于报告中的 WAL 同步策略、数据可压缩性、硬件与并发度，不能直接代表生产吞吐。
 
 import (
@@ -196,7 +196,7 @@ func parseConfig(args []string, output io.Writer) (stressConfig, error) {
 	flags := flag.NewFlagSet("samkv-stress", flag.ContinueOnError)
 	flags.SetOutput(output)
 	flags.StringVar(&config.dir, "dir", "", "empty/new data directory; defaults to a temporary directory")
-	flags.StringVar(&config.mode, "mode", "kv", "workload mode: kv or logs")
+	flags.StringVar(&config.mode, "mode", "logs", "workload mode: logs")
 	flags.IntVar(&config.count, "count", 100_000, "number of records")
 	flags.IntVar(&config.concurrency, "concurrency", runtime.GOMAXPROCS(0), "writer goroutines")
 	flags.IntVar(&config.valueBytes, "value-bytes", 256, "value or message bytes")
@@ -209,8 +209,8 @@ func parseConfig(args []string, output io.Writer) (stressConfig, error) {
 	if flags.NArg() != 0 {
 		return stressConfig{}, errors.New("unexpected positional arguments")
 	}
-	if config.mode != "kv" && config.mode != "logs" {
-		return stressConfig{}, errors.New("mode must be kv or logs")
+	if config.mode != "logs" {
+		return stressConfig{}, errors.New("mode must be logs")
 	}
 	if config.count <= 0 || config.concurrency <= 0 || config.valueBytes < 0 {
 		return stressConfig{}, errors.New("count and concurrency must be positive; value-bytes must not be negative")
@@ -271,15 +271,11 @@ func runWrites(database *store.StoreManager, config stressConfig, base time.Time
 					return
 				}
 				var err error
-				if config.mode == "kv" {
-					err = database.Put(fmt.Sprintf("key-%012d", index), string(value))
-				} else {
-					_, err = database.WriteLog(store.LogEntry{
-						Timestamp: base.Add(time.Duration(index) * time.Nanosecond),
-						Labels:    labels,
-						Message:   value,
-					})
-				}
+			_, err = database.WriteLog(store.LogEntry{
+				Timestamp: base.Add(time.Duration(index) * time.Nanosecond),
+				Labels:    labels,
+				Message:   value,
+			})
 				if err != nil {
 					once.Do(func() { firstErr = err })
 					return
@@ -292,26 +288,16 @@ func runWrites(database *store.StoreManager, config stressConfig, base time.Time
 }
 
 func verifyWrites(database *store.StoreManager, config stressConfig, base time.Time) error {
-	if config.mode == "logs" {
-		logs, err := database.Query(
-			base,
-			base.Add(time.Duration(config.count)*time.Nanosecond),
-			[]utils.Label{{Name: "app", Value: "stress"}},
-		)
-		if err != nil {
-			return err
-		}
-		if len(logs) != config.count {
-			return fmt.Errorf("verified %d logs, want %d", len(logs), config.count)
-		}
-		return nil
+	logs, err := database.Query(
+		base,
+		base.Add(time.Duration(config.count)*time.Nanosecond),
+		[]utils.Label{{Name: "app", Value: "stress"}},
+	)
+	if err != nil {
+		return err
 	}
-	for index := 0; index < config.count; index++ {
-		key := fmt.Sprintf("key-%012d", index)
-		value, ok := database.Get(key)
-		if !ok || len(value) != config.valueBytes {
-			return fmt.Errorf("verification failed for %s", key)
-		}
+	if len(logs) != config.count {
+		return fmt.Errorf("verified %d logs, want %d", len(logs), config.count)
 	}
 	return nil
 }

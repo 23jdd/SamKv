@@ -1,6 +1,6 @@
 package main
 
-// 本文件验证压力参数边界、目录保护、负载可复现性、速率计算及小规模 KV/日志端到端运行。
+// 本文件验证压力参数边界、目录保护、负载可复现性、速率计算及小规模日志端到端运行。
 
 import (
 	"bytes"
@@ -9,33 +9,29 @@ import (
 	"time"
 )
 
-func TestStressRunnerVerifiesPersistedKVAndLogWorkloads(t *testing.T) {
-	for _, mode := range []string{"kv", "logs"} {
-		t.Run(mode, func(t *testing.T) {
-			report := runStressReport(t,
-				"-mode", mode,
-				"-count", "100",
-				"-concurrency", "4",
-				"-value-bytes", "32",
-			)
-			if report.Mode != mode || report.Records != 100 || !report.Verified ||
-				report.WALSyncPolicy != "interval" || report.PayloadPattern != "repeated" || report.SSTables == 0 {
-				t.Fatalf("report = %#v", report)
-			}
-			if report.CheckpointDuration <= 0 || report.ReopenDuration <= 0 ||
-				report.VerifyDuration <= 0 || report.Duration <= 0 ||
-				report.OperationsPerSec <= 0 {
-				t.Fatalf("phase metrics = %#v", report)
-			}
-			if report.WriteDuration > 0 &&
-				(report.WriteOperationsPerSec <= 0 || report.PayloadMiBPerSec <= 0) {
-				t.Fatalf("write metrics = %#v", report)
-			}
-			if report.Duration < report.WriteDuration+report.CheckpointDuration+
-				report.ReopenDuration+report.VerifyDuration {
-				t.Fatalf("total duration does not include all phases: %#v", report)
-			}
-		})
+func TestStressRunnerVerifiesPersistedLogWorkloads(t *testing.T) {
+	report := runStressReport(t,
+		"-mode", "logs",
+		"-count", "100",
+		"-concurrency", "4",
+		"-value-bytes", "32",
+	)
+	if report.Mode != "logs" || report.Records != 100 || !report.Verified ||
+		report.WALSyncPolicy != "interval" || report.PayloadPattern != "repeated" || report.SSTables == 0 {
+		t.Fatalf("report = %#v", report)
+	}
+	if report.CheckpointDuration <= 0 || report.ReopenDuration <= 0 ||
+		report.VerifyDuration <= 0 || report.Duration <= 0 ||
+		report.OperationsPerSec <= 0 {
+		t.Fatalf("phase metrics = %#v", report)
+	}
+	if report.WriteDuration > 0 &&
+		(report.WriteOperationsPerSec <= 0 || report.PayloadMiBPerSec <= 0) {
+		t.Fatalf("write metrics = %#v", report)
+	}
+	if report.Duration < report.WriteDuration+report.CheckpointDuration+
+		report.ReopenDuration+report.VerifyDuration {
+		t.Fatalf("total duration does not include all phases: %#v", report)
 	}
 }
 
@@ -56,7 +52,7 @@ func TestStressRunnerReportsEveryWriteDurability(t *testing.T) {
 
 func TestStressRunnerCanSkipReopenVerification(t *testing.T) {
 	report := runStressReport(t,
-		"-mode", "kv",
+		"-mode", "logs",
 		"-count", "100",
 		"-concurrency", "2",
 		"-value-bytes", "16",
