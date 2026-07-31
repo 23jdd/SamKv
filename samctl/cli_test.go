@@ -224,7 +224,7 @@ func TestRunSupportsHelp(t *testing.T) {
 			t.Fatalf("run(%v) error = %v", args, err)
 		}
 		output := stdout.String()
-		if !strings.Contains(output, "Usage / 用法:") || !strings.Contains(output, "samctl log") || !strings.Contains(output, "samctl metrics") || !strings.Contains(output, "写入单条结构化日志") {
+		if !strings.Contains(output, "Usage / 用法:") || !strings.Contains(output, "samctl log") || !strings.Contains(output, "samctl metrics") || !strings.Contains(output, "samctl scan") || !strings.Contains(output, "写入单条结构化日志") {
 			t.Fatalf("help output=%q", output)
 		}
 	}
@@ -265,6 +265,41 @@ func TestParseCLIConfigAcceptsExplicitEmptyLogMessage(t *testing.T) {
 	}
 	if !config.messageSet || config.message != "" {
 		t.Fatalf("messageSet=%v message=%q", config.messageSet, config.message)
+	}
+}
+
+func TestClientScanAndRunScan(t *testing.T) {
+	server := newTestKVServer(t)
+	client := newTestClient(t, server.URL)
+	ctx := context.Background()
+
+	// 先写入两条数据
+	if err := client.Put(ctx, "services/api", "ready"); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	if err := client.Put(ctx, "services/web", "up"); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+
+	result, err := client.Scan(ctx, "", "")
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.Records) != 2 {
+		t.Fatalf("Scan() records=%d, want 2", len(result.Records))
+	}
+
+	address, port := testServerAddress(t, server.URL)
+	connectionFlags := []string{"-a", address, "-p", strconv.Itoa(port)}
+
+	var stdout strings.Builder
+	scanArgs := append([]string{"scan"}, connectionFlags...)
+	scanArgs = append(scanArgs, "services/api", "services/web")
+	if err := run(scanArgs, &stdout, io.Discard); err != nil {
+		t.Fatalf("run(scan) error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"records":`) {
+		t.Fatalf("scan output=%q", stdout.String())
 	}
 }
 
@@ -381,6 +416,19 @@ func newTestKVServer(t *testing.T) *httptest.Server {
 				End:       now,
 				Entries:   entries,
 				Truncated: false,
+			})
+			return
+		case "/scan":
+			if request.Method != http.MethodGet {
+				http.Error(w, "unsupported method", http.StatusMethodNotAllowed)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string][]map[string]string{
+				"records": {
+					{"key": "key1", "value": "val1"},
+					{"key": "key2", "value": "val2"},
+				},
 			})
 			return
 		}

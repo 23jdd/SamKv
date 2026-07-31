@@ -72,6 +72,15 @@ type LogQueryResult struct {
 	Truncated bool       `json:"truncated"`
 }
 
+type ScanRecord struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type ScanResult struct {
+	Records []ScanRecord `json:"records"`
+}
+
 // NewClient 创建 HTTP 客户端；address 传主机名或裸 IPv4/IPv6，不要包含协议和端口。
 // port 必须为 1..65535，timeout 必须大于 0；当前客户端固定使用明文 HTTP。
 func NewClient(address string, port int, timeout time.Duration) (*Client, error) {
@@ -212,6 +221,31 @@ func (c *Client) QueryLogs(ctx context.Context, query string, limit int) (LogQue
 	return response, nil
 }
 
+func (c *Client) Scan(ctx context.Context, startKey, endKey string) (ScanResult, error) {
+	endpoint, err := url.Parse(c.baseURL + "/scan")
+	if err != nil {
+		return ScanResult{}, err
+	}
+	values := endpoint.Query()
+	if startKey != "" {
+		values.Set("start", startKey)
+	}
+	if endKey != "" {
+		values.Set("end", endKey)
+	}
+	endpoint.RawQuery = values.Encode()
+
+	body, err := c.request(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	var response ScanResult
+	if err := json.Unmarshal(body, &response); err != nil {
+		return ScanResult{}, fmt.Errorf("decode scan response: %w", err)
+	}
+	return response, nil
+}
+
 func (c *Client) Metrics(ctx context.Context) (string, error) {
 	body, err := c.request(ctx, http.MethodGet, c.baseURL+"/metrics", nil)
 	if err != nil {
@@ -286,6 +320,8 @@ type cliConfig struct {
 	query      string
 	limit      int
 	batchFile  string
+	startKey   string
+	endKey     string
 }
 
 type optionalString struct {
@@ -417,6 +453,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		_, err = fmt.Fprint(stdout, metrics)
 		return err
+	case "scan":
+		result, err := client.Scan(ctx, config.startKey, config.endKey)
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, result)
 	default:
 		return fmt.Errorf("%w: %q", ErrInvalidMode, config.mode)
 	}
@@ -438,7 +480,7 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 	flags.SetOutput(output)
 	var value optionalString
 	var message optionalString
-	flags.StringVar(&config.mode, "m", config.mode, "mode: get, put, del, health, log, log-batch, query, metrics, help")
+	flags.StringVar(&config.mode, "m", config.mode, "mode: get, put, del, health, log, log-batch, query, metrics, scan, help")
 	flags.StringVar(&config.key, "k", "", "key")
 	flags.Var(&value, "v", "value; empty string is allowed")
 	flags.Var(&message, "message", "log message; empty string is allowed")
@@ -448,6 +490,8 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 	flags.StringVar(&config.query, "query", "", "QueryFormat expression for log query")
 	flags.IntVar(&config.limit, "limit", 0, "log query limit; 0 uses server default")
 	flags.StringVar(&config.batchFile, "file", "", "JSON file for log-batch")
+	flags.StringVar(&config.startKey, "start", "", "start key for scan")
+	flags.StringVar(&config.endKey, "end", "", "end key for scan (exclusive)")
 	flags.StringVar(&config.address, "a", config.address, "server address")
 	flags.IntVar(&config.port, "p", config.port, "server port")
 	flags.DurationVar(&config.timeout, "timeout", config.timeout, "request timeout")
@@ -472,6 +516,15 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 	case "query":
 		if config.query == "" && len(remaining) > 0 {
 			config.query = remaining[0]
+			remaining = remaining[1:]
+		}
+	case "scan":
+		if config.startKey == "" && len(remaining) > 0 {
+			config.startKey = remaining[0]
+			remaining = remaining[1:]
+		}
+		if config.endKey == "" && len(remaining) > 0 {
+			config.endKey = remaining[0]
 			remaining = remaining[1:]
 		}
 	default:
@@ -539,6 +592,10 @@ func parseCLIConfig(args []string, output io.Writer) (cliConfig, error) {
 		if config.key != "" || config.valueSet {
 			return cliConfig{}, errors.New("cli: metrics does not accept key or value")
 		}
+	case "scan":
+		if config.key != "" || config.valueSet {
+			return cliConfig{}, errors.New("cli: scan does not accept key or value")
+		}
 	default:
 		return cliConfig{}, fmt.Errorf("%w: %q", ErrInvalidMode, config.mode)
 	}
@@ -551,6 +608,10 @@ func normalizeMode(mode string) string {
 		return "del"
 	case "logs":
 		return "log"
+	case "kv-scan":
+		return "scan"
+	case "kvscan":
+		return "scan"
 	default:
 		return strings.ToLower(mode)
 	}
@@ -576,6 +637,8 @@ func writeCLIUsage(output io.Writer, flags *flag.FlagSet) {
 	fmt.Fprintln(output, "      使用 QueryFormat 查询结构化日志")
 	fmt.Fprintln(output, "  samctl metrics [-a address] [-p port]")
 	fmt.Fprintln(output, "      输出 Prometheus 指标")
+	fmt.Fprintln(output, "  samctl scan [-a address] [-p port] [-start startKey] [-end endKey]")
+	fmt.Fprintln(output, "      扫描 [start, end) 范围内的 KV 键，start/end 均可省略")
 	fmt.Fprintln(output, "  samctl -m <mode> -k <key> [-v value]")
 	fmt.Fprintln(output, "      兼容旧的 -m 调用方式")
 	if flags != nil {

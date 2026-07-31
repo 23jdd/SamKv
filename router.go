@@ -78,6 +78,9 @@ func NewRouter(database KVStore) *gin.Engine {
 	if metricsDatabase, ok := database.(MetricsStore); ok {
 		registerMetricsRoute(router, metricsDatabase)
 	}
+	if scanDatabase, ok := database.(ScannerStore); ok {
+		registerScanRoutes(router, scanDatabase)
+	}
 
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, errorResponse{Error: "route not found"})

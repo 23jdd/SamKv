@@ -71,6 +71,7 @@ WAL -> Active MemTable -> Immutable MemTable -> L0 SSTable
 | `PUT` | `/kv/*key` | `{"value":"..."}` | `204 No Content` |
 | `GET` | `/kv/*key` | 无 | `200 {"key":"...","value":"..."}` |
 | `DELETE` | `/kv/*key` | 无 | `204 No Content` |
+| `GET` | `/scan?start=&end=` | 无 | `200 {"records":[{"key":"...","value":"..."}]}` |
 
 `*key` 可以包含 `/`。缺少 key 返回 `400`，key 不存在返回 `404`，SSTable 读取损坏等错误返回 `500`，健康检查在 Store 异常时返回 `503`。HTTP 请求体和编码后的 WAL 单条记录上限均为 64 MiB。
 
@@ -81,6 +82,11 @@ curl -X PUT http://127.0.0.1:9999/kv/app/config \
 
 curl http://127.0.0.1:9999/kv/app/config
 curl -X DELETE http://127.0.0.1:9999/kv/app/config
+
+curl "http://127.0.0.1:9999/scan?start=app/a&end=app/z"
+curl "http://127.0.0.1:9999/scan?start=app/"
+curl "http://127.0.0.1:9999/scan?end=app/z"
+curl "http://127.0.0.1:9999/scan"
 ```
 
 ### 结构化日志写入
@@ -165,6 +171,8 @@ samctl get app/config
 samctl del app/config
 samctl health
 samctl metrics
+samctl scan app/a app/z
+samctl scan -start app/a
 
 samctl log -label app=api -label level=ERROR -message "request failed"
 samctl log-batch -file entries.json
