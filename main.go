@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/23jdd/SamKv/pkg/store"
+	"github.com/mbndr/figlet4go"
 )
 
 const (
@@ -87,6 +88,9 @@ func run(args []string) (returnErr error) {
 	if err != nil {
 		return err
 	}
+	ascii := figlet4go.NewAsciiRender()
+	renderStr, _ := ascii.Render("SamKv")
+	fmt.Println(renderStr)
 	server := NewServer(port, address, database)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

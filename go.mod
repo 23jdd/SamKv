@@ -9,6 +9,8 @@ require (
 	golang.org/x/sys v0.41.0
 )
 
+require github.com/mbndr/figlet4go v0.0.0-20190224160619-d6cef5b186ea // indirect
+
 require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
