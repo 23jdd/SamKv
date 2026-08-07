@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/23jdd/SamKv/pkg/store"
@@ -57,8 +56,6 @@ func NewRouter(database KVStore) *gin.Engine {
 	if database == nil {
 		panic("router: nil store")
 	}
-	os.Rename()
-    
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
 	router.HandleMethodNotAllowed = true
