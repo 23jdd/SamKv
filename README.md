@@ -3,12 +3,9 @@
 </p>
 
 # SamKv
-
-一个使用 Go 实现、面向结构化日志场景的单机 LSM-Tree KV 存储引擎。
+面向结构化日志场景的单机 LSM-Tree KV 存储引擎。
 
 ## 目录
-
-- [核心能力](#核心能力)
 - [快速开始](#快速开始)
 - [HTTP API](#http-api)
 - [命令行工具](#命令行工具)
@@ -18,18 +15,6 @@
 - [配置](#配置)
 - [存储与恢复](#存储与恢复)
 - [测试与压测](#测试与压测)
-## 核心能力
-
-| 模块 | 已实现能力 |
-| --- | --- |
-| WAL | 64 MiB 分段、按记录边界轮转、CRC32 记录校验、末段残缺尾部截断、完整坏记录跳过与恢复报告、周期/每写 fsync |
-| MemTable | 并发安全 SkipList、原子容量统计、墓碑、Mutable/Immutable 切换和后台刷盘 |
-| SSTable | DataBlock、MetaBlock、IndexBlock、Footer、前缀压缩、restart point、CRC32C Block 校验 |
-| 索引与缓存 | key/标签 BloomFilter、时间与 key 范围索引、共享字节容量 LRU Block Cache |
-| Compaction | L0 重叠合并、非零层增量下推、key-range 并行子任务、共享令牌桶 I/O 限速、原子 Manifest 发布、底层墓碑与保留策略回收 |
-| 元数据 | `MANIFEST-<generation>` 原子发布、`CURRENT` 指针与备份回退、格式版本、SSTable 层级和日志序列号 |
-| 运维 | 数据目录进程锁、Checkpoint、校验修复、全量备份恢复、格式升级、运行指标 |
-| 接入 | KV HTTP API、结构化日志写入/批量写入/QueryFormat 查询、Prometheus 指标、CLI |
 
 ## 快速开始
 
@@ -38,11 +23,11 @@
 ```bash
 go install github.com/23jdd/SamKv
 Samkv 
-SamKv -f new.env   # 指定其他 env 文件
-SamKv start     #以 Daemon 方式运行
-SamKv start -f new.env  # 指定其他 env 文件
+SamKv -f new.env   # 指定 env 文件
+SamKv start     # 以Daemon 方式运行
+SamKv start -f new.env  # 指定 env 文件
 SamKv stop # 停止 Daemon 
-SamKv status #  检查 Daemon 是否运行
+SamKv status #  检查 Daemon 状态
 ```
 
 默认示例配置监听 `0.0.0.0:9999`，数据写入 `./logs`。服务收到 `SIGINT` 或 `SIGTERM` 后会优雅关闭 HTTP Server 和 Store。
@@ -431,7 +416,7 @@ WALSegmentMaxRecords=0
 [Footer]
 ```
 
-Footer 前 6 字节是 UTF-8 Magic `流萤`，后续保存格式版本及 MetaBlock/IndexBlock 位置。SSTable v2 为每个 Block 增加 CRC32C；读取损坏 Block 会返回错误。当前代码兼容只读 v1，并拒绝未知的未来版本。
+Footer 前 6 字节是 UTF-8 Magic ，后续保存格式版本及 MetaBlock/IndexBlock 位置。SSTable v2 为每个 Block 增加 CRC32C；读取损坏 Block 会返回错误。当前代码兼容只读 v1，并拒绝未知的未来版本。
 
 打开 SSTable 时只加载 Footer、MetaBlock 和 IndexBlock。DataBlock 按查询范围读取并进入共享 LRU Block Cache；校验和启动恢复扫描绕过缓存，避免缓存掩盖磁盘损坏。`NewIterator` 可在 `[startKey,endKey)` 内按 Block 懒加载遍历并保留墓碑，遍历结束后必须检查 `Error()`。
 
