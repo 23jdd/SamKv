@@ -3,6 +3,12 @@
 </p>
 
 # SamKv
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white" alt="Go 1.25" />
+  <img src="https://img.shields.io/badge/LSM-WAL-4DC56B" alt="LSM WAL" />
+  <img src="https://img.shields.io/badge/Coverage-79%25-f2ca45" alt="Coverage 79%" />
+</p>
+
 面向结构化日志场景的单机 LSM-Tree KV 存储引擎。
 
 ## 目录
