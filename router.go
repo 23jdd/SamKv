@@ -57,7 +57,7 @@ func NewRouter(database KVStore) *gin.Engine {
 		panic("router: nil store")
 	}
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery())
+	router.Use(gin.Logger(), gin.Recovery(), corsMiddleware())
 	router.HandleMethodNotAllowed = true
 
 	handler := &kvHandler{store: database}
@@ -88,6 +88,22 @@ func NewRouter(database KVStore) *gin.Engine {
 		c.JSON(http.StatusMethodNotAllowed, errorResponse{Error: "method not allowed"})
 	})
 	return router
+}
+
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		headers := c.Writer.Header()
+		headers.Set("Access-Control-Allow-Origin", "*")
+		headers.Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+		headers.Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+		headers.Set("Access-Control-Max-Age", "86400")
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	}
 }
 
 func (h *kvHandler) health(c *gin.Context) {

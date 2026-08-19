@@ -100,6 +100,30 @@ func TestHealthReportsBackgroundFailure(t *testing.T) {
 	}
 }
 
+func TestRouterAddsCORSHeaders(t *testing.T) {
+	router := newTestRouter(t)
+
+	response := performRequest(router, http.MethodGet, "/healthz", "")
+	if response.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("Access-Control-Allow-Origin=%q", response.Header().Get("Access-Control-Allow-Origin"))
+	}
+	if response.Header().Get("Access-Control-Allow-Methods") != "GET,POST,PUT,DELETE,OPTIONS" {
+		t.Fatalf("Access-Control-Allow-Methods=%q", response.Header().Get("Access-Control-Allow-Methods"))
+	}
+}
+
+func TestRouterHandlesCORSPreflight(t *testing.T) {
+	router := newTestRouter(t)
+
+	response := performRequest(router, http.MethodOptions, "/kv/services/api", "")
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("OPTIONS status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Access-Control-Allow-Headers") != "Content-Type,Authorization" {
+		t.Fatalf("Access-Control-Allow-Headers=%q", response.Header().Get("Access-Control-Allow-Headers"))
+	}
+}
+
 func newTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
