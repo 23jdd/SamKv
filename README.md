@@ -14,6 +14,7 @@
 ## 目录
 - [快速开始](#快速开始)
 - [HTTP API](#http-api)
+- [WebUI](#webui)
 - [命令行工具](#命令行工具)
 - [Go API](#go-api)
 - [代码文档与示例](#代码文档与示例)
@@ -54,7 +55,7 @@ SamKv status #  检查 Daemon 状态
 | `DELETE` | `/kv/*key` | 无 | `204 No Content` |
 | `GET` | `/scan?start=&end=` | 无 | `200 {"records":[{"key":"...","value":"..."}]}` |
 
-`*key` 可以包含 `/`。缺少 key 返回 `400`，key 不存在返回 `404`，SSTable 读取损坏等错误返回 `500`，健康检查在 Store 异常时返回 `503`。HTTP 请求体和编码后的 WAL 单条记录上限均为 64 MiB。
+`*key` 可以包含 `/`。缺少 key 返回 `400`，key 不存在返回 `404`，SSTable 读取损坏等错误返回 `500`，健康检查在 Store 异常时返回 `503`。HTTP 请求体和编码后的 WAL 单条记录上限均为 64 MiB。HTTP 路由内置 CORS middleware，普通响应和 `OPTIONS` 预检请求都会返回跨域头，默认允许 `GET,POST,PUT,DELETE,OPTIONS` 和 `Content-Type,Authorization` 请求头。
 
 ```bash
 curl -X PUT http://127.0.0.1:9999/kv/app/config \
@@ -139,6 +140,26 @@ curl http://127.0.0.1:9999/metrics
 ```
 
 `/metrics` 使用 Prometheus 文本格式，包含读写、Checkpoint、Compaction、MemTable、WAL/SSTable 字节数、每层文件数、Block Cache 命中/未命中/淘汰以及后台错误状态。`samkv_compaction_subtasks_total` 记录已启动的 key-range 子任务，`samkv_compaction_output_files_total` 记录成功发布的 Compaction 输出表。指标为进程内统计，重启后计数器重新开始。
+
+## WebUI
+
+`webui` 提供一个无需前端构建步骤的静态可视化控制台，默认监听 `127.0.0.1:9998`，并把 `/api/*` 代理到 SamKV HTTP API 默认地址 `http://127.0.0.1:9999`：
+
+```bash
+go run ./webui
+
+# 自定义 WebUI 地址、端口和后端 API
+go run ./webui -addr 127.0.0.1 -port 9997 -api http://127.0.0.1:9999
+```
+
+可视化功能包括：
+
+- 健康检查和关键指标概览。
+- KV 写入、读取、删除和范围扫描，结果区会展示操作摘要、数据大小、记录列表，并支持复制 key/value。
+- 结构化日志单条写入、批量写入和查询。日志 label 支持类似 GitHub label 的逐项添加和删除；查询区提供 Search、Range、Offset、Limit 和 Filter Labels 构建器，并自动生成 QueryFormat。
+- 指标详情会把 `/metrics` 中的关键 Prometheus 指标渲染成可读的状态条。
+
+WebUI 进程只负责静态资源和反向代理；读写数据仍由 SamKV 主服务处理，因此需要先启动 SamKV HTTP API 服务。默认只绑定本机地址，如需暴露到其他机器，应在可信网络或反向代理后使用。
 
 ## 命令行工具
 
