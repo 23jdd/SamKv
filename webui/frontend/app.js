@@ -1,6 +1,7 @@
 const state = {
   apiBase: localStorage.getItem("samkv.apiBase") || "/api",
   logLabels: {},
+  queryLabels: {},
   metrics: {},
   rawMetrics: "",
 };
@@ -17,8 +18,8 @@ const elements = {
   kvResult: $("#kvResult"),
   logResult: $("#logResult"),
   logLabelList: $("#logLabelList"),
+  queryLabelList: $("#queryLabelList"),
   toast: $("#toast"),
-  metricsRaw: $("#metricsRaw"),
   metricBars: $("#metricBars"),
 };
 
@@ -60,67 +61,180 @@ async function request(path, options = {}) {
   return payload;
 }
 
-function renderJSON(target, payload) {
-  target.className = "";
-  target.innerHTML = `<pre class="json-card">${escapeHTML(JSON.stringify(payload, null, 2))}</pre>`;
-}
-
-function renderKVRecords(records) {
-  if (!records.length) {
-    elements.kvResult.className = "empty-state";
-    elements.kvResult.textContent = "没有扫描到记录";
-    return;
-  }
+function renderKVActionResult(action, detail) {
+  const actionText = {
+    put: "写入成功",
+    get: "读取成功",
+    delete: "删除成功",
+  }[action];
+  const value = detail.value ?? "";
+  const showValue = action !== "delete";
   elements.kvResult.className = "";
   elements.kvResult.innerHTML = `
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Key</th><th>Value</th></tr></thead>
-        <tbody>
-          ${records
-            .map(
-              (record) => `
-                <tr>
-                  <td><code>${escapeHTML(record.key)}</code></td>
-                  <td>${escapeHTML(record.value)}</td>
-                </tr>`,
-            )
-            .join("")}
-        </tbody>
-      </table>
+    <div class="result-shell">
+      <div class="result-summary ${action === "delete" ? "danger-summary" : ""}">
+        <div>
+          <span class="result-badge">${escapeHTML(actionText)}</span>
+          <h4>${escapeHTML(detail.key)}</h4>
+        </div>
+        <div class="summary-stats">
+          <span><strong>${escapeHTML(action.toUpperCase())}</strong> 操作</span>
+          <span><strong>${formatBytes(byteLength(value))}</strong> Value</span>
+          <span><strong>${escapeHTML(new Date().toLocaleTimeString("zh-CN", { hour12: false }))}</strong> 完成</span>
+        </div>
+      </div>
+      <div class="detail-grid">
+        <div class="detail-item">
+          <span>Key</span>
+          <code>${escapeHTML(detail.key)}</code>
+        </div>
+        ${
+          showValue
+            ? `<div class="detail-item wide">
+                <span>Value</span>
+                <pre>${escapeHTML(value)}</pre>
+              </div>`
+            : `<div class="detail-item wide">
+                <span>Status</span>
+                <p>该 key 已提交删除请求。</p>
+              </div>`
+        }
+      </div>
+      ${
+        showValue
+          ? `<div class="result-actions">
+              <button type="button" class="secondary" data-copy="${escapeHTML(value)}">复制 Value</button>
+              <button type="button" class="ghost" data-copy="${escapeHTML(detail.key)}">复制 Key</button>
+            </div>`
+          : `<div class="result-actions">
+              <button type="button" class="ghost" data-copy="${escapeHTML(detail.key)}">复制 Key</button>
+            </div>`
+      }
+    </div>`;
+}
+
+function renderKVRecords(records, context = {}) {
+  if (!records.length) {
+    renderEmptyResult(elements.kvResult, "没有扫描到记录", "调整 Start / End 范围后再试一次。");
+    return;
+  }
+  const totalValueBytes = records.reduce((sum, record) => sum + byteLength(record.value), 0);
+  elements.kvResult.className = "";
+  elements.kvResult.innerHTML = `
+    <div class="result-shell">
+      <div class="result-summary">
+        <div>
+          <span class="result-badge">扫描完成</span>
+          <h4>${formatNumber(records.length)} 条记录</h4>
+        </div>
+        <div class="summary-stats">
+          <span><strong>${escapeHTML(context.start || "最小 key")}</strong> Start</span>
+          <span><strong>${escapeHTML(context.end || "最大 key")}</strong> End</span>
+          <span><strong>${formatBytes(totalValueBytes)}</strong> Value</span>
+        </div>
+      </div>
+      <div class="record-list">
+        ${records
+          .map(
+            (record) => `
+              <article class="kv-record">
+                <div class="kv-record-main">
+                  <code>${escapeHTML(record.key)}</code>
+                  <p>${escapeHTML(record.value)}</p>
+                </div>
+                <div class="record-meta">
+                  <span>${formatBytes(byteLength(record.value))}</span>
+                  <button type="button" class="ghost" data-copy="${escapeHTML(record.value)}">复制</button>
+                </div>
+              </article>`,
+          )
+          .join("")}
+      </div>
     </div>`;
 }
 
 function renderLogs(payload) {
   const entries = payload.entries || [];
   if (!entries.length) {
-    elements.logResult.className = "empty-state";
-    elements.logResult.textContent = "没有匹配的日志";
+    renderEmptyResult(elements.logResult, "没有匹配的日志", "放宽 Search、Range 或 Filter Labels 后再查询。");
     return;
   }
   elements.logResult.className = "";
   elements.logResult.innerHTML = `
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>时间</th><th>Sequence</th><th>Labels</th><th>Message</th></tr>
-        </thead>
-        <tbody>
-          ${entries
-            .map(
-              (entry) => `
-                <tr>
-                  <td>${escapeHTML(formatTime(entry.timestamp))}</td>
-                  <td>${escapeHTML(String(entry.sequence))}</td>
-                  <td>${renderLabels(entry.labels || {})}</td>
-                  <td>${escapeHTML(entry.message)}</td>
-                </tr>`,
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </div>
-    <p class="muted-line">窗口：${escapeHTML(formatTime(payload.start))} - ${escapeHTML(formatTime(payload.end))}${payload.truncated ? "，结果已截断" : ""}</p>`;
+    <div class="result-shell">
+      <div class="result-summary">
+        <div>
+          <span class="result-badge">${payload.truncated ? "结果已截断" : "查询完成"}</span>
+          <h4>${formatNumber(entries.length)} 条日志</h4>
+        </div>
+        <div class="summary-stats">
+          <span><strong>${escapeHTML(payload.matcher || "*")}</strong> Matcher</span>
+          <span><strong>${escapeHTML(formatTime(payload.start))}</strong> Start</span>
+          <span><strong>${escapeHTML(formatTime(payload.end))}</strong> End</span>
+        </div>
+      </div>
+      <div class="log-stream">
+        ${entries
+          .map(
+            (entry) => `
+              <article class="log-entry">
+                <div class="log-entry-head">
+                  <div>
+                    <time>${escapeHTML(formatTime(entry.timestamp))}</time>
+                    <strong>#${escapeHTML(String(entry.sequence))}</strong>
+                  </div>
+                  <button type="button" class="ghost" data-copy="${escapeHTML(entry.message)}">复制 Message</button>
+                </div>
+                <div class="log-labels">${renderLabels(entry.labels || {})}</div>
+                <pre>${escapeHTML(entry.message)}</pre>
+              </article>`,
+          )
+          .join("")}
+      </div>
+    </div>`;
+}
+
+function renderLogWriteResult(payload, requestBody) {
+  elements.logResult.className = "";
+  elements.logResult.innerHTML = `
+    <div class="result-shell">
+      <div class="result-summary">
+        <div>
+          <span class="result-badge">日志写入成功</span>
+          <h4>Sequence #${escapeHTML(String(payload.sequence))}</h4>
+        </div>
+        <div class="summary-stats">
+          <span><strong>${formatNumber(Object.keys(requestBody.labels || {}).length)}</strong> Labels</span>
+          <span><strong>${formatBytes(byteLength(requestBody.message))}</strong> Message</span>
+          <span><strong>${escapeHTML(requestBody.timestamp ? formatTime(requestBody.timestamp) : "服务端时间")}</strong> Timestamp</span>
+        </div>
+      </div>
+      <div class="log-entry single">
+        <div class="log-labels">${renderLabels(requestBody.labels || {})}</div>
+        <pre>${escapeHTML(requestBody.message)}</pre>
+      </div>
+    </div>`;
+}
+
+function renderLogBatchResult(payload) {
+  const sequences = payload.sequences || [];
+  elements.logResult.className = "";
+  elements.logResult.innerHTML = `
+    <div class="result-shell">
+      <div class="result-summary">
+        <div>
+          <span class="result-badge">批量写入成功</span>
+          <h4>${formatNumber(sequences.length)} 条日志</h4>
+        </div>
+        <div class="summary-stats">
+          <span><strong>${escapeHTML(String(sequences[0] ?? "--"))}</strong> First</span>
+          <span><strong>${escapeHTML(String(sequences.at(-1) ?? "--"))}</strong> Last</span>
+        </div>
+      </div>
+      <div class="sequence-grid">
+        ${sequences.map((sequence) => `<code>#${escapeHTML(String(sequence))}</code>`).join("")}
+      </div>
+    </div>`;
 }
 
 function renderLabels(labels) {
@@ -171,6 +285,93 @@ function currentLogLabels() {
   return { ...state.logLabels };
 }
 
+function renderQueryLabelEditor() {
+  const names = Object.keys(state.queryLabels).sort();
+  elements.queryLabelList.innerHTML = names
+    .map(
+      (name) => `
+        <span class="label-chip">
+          <span>${escapeHTML(name)}=${escapeHTML(state.queryLabels[name])}</span>
+          <button type="button" data-label="${escapeHTML(name)}" title="移除 ${escapeHTML(name)}">x</button>
+        </span>`,
+    )
+    .join("");
+}
+
+function addQueryLabel() {
+  const nameInput = $("#queryLabelName");
+  const valueInput = $("#queryLabelValue");
+  const name = nameInput.value.trim();
+  const value = valueInput.value.trim();
+  if (!name) {
+    throw new Error("Filter label name 不能为空");
+  }
+  if (!isValidLabelName(name)) {
+    throw new Error("Filter label name 只能包含字母、数字、_、.、:、/、-，且不能以数字开头");
+  }
+  if (!value) {
+    throw new Error("Filter label value 不能为空");
+  }
+  state.queryLabels[name] = value;
+  nameInput.value = "";
+  valueInput.value = "";
+  nameInput.focus();
+  renderQueryLabelEditor();
+  updateLogQueryPreview();
+}
+
+function buildLogQueryFromBuilder() {
+  const matcher = $("#queryMatcher").value.trim();
+  if (!matcher) {
+    throw new Error("Search 不能为空");
+  }
+  const labels = Object.keys(state.queryLabels)
+    .sort()
+    .map((name) => `${name}=${quoteQueryToken(state.queryLabels[name])}`)
+    .join(",");
+  const range = $("#queryRange").value;
+  const offset = $("#queryOffset").value.trim();
+  const offsetPart = offset && offset !== "0" ? ` offset ${offset}` : "";
+  return `${quoteQueryToken(matcher)}{${labels}}[${range}]${offsetPart}`;
+}
+
+function updateLogQueryPreview() {
+  if (!$("#queryMatcher").value.trim()) return;
+  try {
+    $("#logQuery").value = buildLogQueryFromBuilder();
+  } catch (_) {
+    // The explicit submit path shows validation errors; live preview stays quiet.
+  }
+}
+
+function clearQueryFilters() {
+  $("#queryMatcher").value = "";
+  $("#queryRange").value = "1h";
+  $("#queryOffset").value = "";
+  $("#logLimit").value = "100";
+  $("#logQuery").value = "";
+  state.queryLabels = {};
+  renderQueryLabelEditor();
+}
+
+function activeLogQuery() {
+  const matcher = $("#queryMatcher").value.trim();
+  if (matcher) {
+    const query = buildLogQueryFromBuilder();
+    $("#logQuery").value = query;
+    return query;
+  }
+  return requiredValue("#logQuery", "QueryFormat 不能为空");
+}
+
+function quoteQueryToken(value) {
+  return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+function isValidLabelName(value) {
+  return /^[\p{L}_][\p{L}\p{N}_.:/-]*$/u.test(value);
+}
+
 function optionalTimestamp(value) {
   if (!value) return undefined;
   return new Date(value).toISOString();
@@ -194,11 +395,9 @@ async function loadMetrics() {
     const text = await request("/metrics", { headers: { Accept: "text/plain" } });
     state.rawMetrics = text;
     state.metrics = parseMetrics(text);
-    elements.metricsRaw.textContent = text || "没有指标内容";
     renderMetricSummary();
     renderMetricBars();
   } catch (error) {
-    elements.metricsRaw.textContent = error.message;
     renderMetricSummary(true);
     elements.metricBars.innerHTML = `<div class="empty-state">${escapeHTML(error.message)}</div>`;
   }
@@ -264,30 +463,6 @@ async function refreshAll() {
   await Promise.all([checkHealth(), loadMetrics()]);
 }
 
-function fillSamples() {
-  $("#kvKey").value = "app/config";
-  $("#kvValue").value = "enabled";
-  $("#scanStart").value = "app/";
-  $("#scanEnd").value = "app/z";
-}
-
-function fillLogSample() {
-  setLogLabels({ app: "api", level: "ERROR", host: "node-1" });
-  $("#logMessage").value = "request failed";
-  $("#logQuery").value = '"failed"{app=api,level=ERROR}[1h]';
-  $("#logLimit").value = "100";
-  $("#logBatchJSON").value = JSON.stringify(
-    {
-      entries: [
-        { labels: { app: "api", level: "INFO" }, message: "request started" },
-        { labels: { app: "api", level: "ERROR" }, message: "request failed" },
-      ],
-    },
-    null,
-    2,
-  );
-}
-
 function bindNavigation() {
   const links = $$(".nav a");
   links.forEach((link) => {
@@ -310,8 +485,6 @@ function bindForms() {
 
   $("#refreshAll").addEventListener("click", refreshAll);
   $("#refreshMetrics").addEventListener("click", loadMetrics);
-  $("#sampleKV").addEventListener("click", fillSamples);
-  $("#sampleLog").addEventListener("click", fillLogSample);
   $("#addLogLabel").addEventListener("click", () => {
     try {
       addLogLabel();
@@ -321,11 +494,41 @@ function bindForms() {
   });
   $("#labelName").addEventListener("keydown", handleLabelInputKeydown);
   $("#labelValue").addEventListener("keydown", handleLabelInputKeydown);
+  $("#addQueryLabel").addEventListener("click", () => {
+    try {
+      addQueryLabel();
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  });
+  $("#queryLabelName").addEventListener("keydown", handleQueryLabelInputKeydown);
+  $("#queryLabelValue").addEventListener("keydown", handleQueryLabelInputKeydown);
+  $("#queryMatcher").addEventListener("input", updateLogQueryPreview);
+  $("#queryRange").addEventListener("change", updateLogQueryPreview);
+  $("#queryOffset").addEventListener("input", updateLogQueryPreview);
+  $("#buildLogQuery").addEventListener("click", () => {
+    try {
+      $("#logQuery").value = buildLogQueryFromBuilder();
+      showToast("查询已生成");
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  });
+  $("#clearQueryFilters").addEventListener("click", clearQueryFilters);
+  elements.kvResult.addEventListener("click", handleResultAction);
+  elements.logResult.addEventListener("click", handleResultAction);
   elements.logLabelList.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-label]");
     if (!button) return;
     delete state.logLabels[button.dataset.label];
     renderLabelEditor();
+  });
+  elements.queryLabelList.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-label]");
+    if (!button) return;
+    delete state.queryLabels[button.dataset.label];
+    renderQueryLabelEditor();
+    updateLogQueryPreview();
   });
   $("#clearKVResult").addEventListener("click", () => {
     elements.kvResult.className = "empty-state";
@@ -347,7 +550,7 @@ function bindForms() {
         method: "PUT",
         body: JSON.stringify({ value }),
       });
-      renderJSON(elements.kvResult, { ok: true, action: "put", key });
+      renderKVActionResult("put", { key, value });
       showToast("KV 写入成功");
       await loadMetrics();
     } catch (error) {
@@ -364,7 +567,7 @@ function bindForms() {
       const key = requiredValue("#kvKey", "Key 不能为空");
       const payload = await request(`/kv/${encodePath(key)}`);
       $("#kvValue").value = payload.value;
-      renderJSON(elements.kvResult, payload);
+      renderKVActionResult("get", payload);
       showToast("KV 读取成功");
       await loadMetrics();
     } catch (error) {
@@ -380,7 +583,7 @@ function bindForms() {
     try {
       const key = requiredValue("#kvKey", "Key 不能为空");
       await request(`/kv/${encodePath(key)}`, { method: "DELETE" });
-      renderJSON(elements.kvResult, { ok: true, action: "delete", key });
+      renderKVActionResult("delete", { key });
       showToast("KV 删除成功");
       await loadMetrics();
     } catch (error) {
@@ -397,7 +600,10 @@ function bindForms() {
     if ($("#scanEnd").value) params.set("end", $("#scanEnd").value);
     try {
       const payload = await request(`/scan?${params.toString()}`);
-      renderKVRecords(payload.records || []);
+      renderKVRecords(payload.records || [], {
+        start: $("#scanStart").value.trim(),
+        end: $("#scanEnd").value.trim(),
+      });
       showToast(`扫描完成，共 ${payload.records?.length || 0} 条`);
       await loadMetrics();
     } catch (error) {
@@ -418,7 +624,7 @@ function bindForms() {
         method: "POST",
         body: JSON.stringify(body),
       });
-      renderJSON(elements.logResult, payload);
+      renderLogWriteResult(payload, body);
       showToast(`日志写入成功：${payload.sequence}`);
       await loadMetrics();
     } catch (error) {
@@ -435,7 +641,7 @@ function bindForms() {
         method: "POST",
         body: JSON.stringify(body),
       });
-      renderJSON(elements.logResult, payload);
+      renderLogBatchResult(payload);
       showToast(`批量写入成功：${payload.sequences.length} 条`);
       await loadMetrics();
     } catch (error) {
@@ -446,9 +652,9 @@ function bindForms() {
   $("#logQueryForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const params = new URLSearchParams();
-    params.set("query", requiredValue("#logQuery", "QueryFormat 不能为空"));
-    params.set("limit", $("#logLimit").value || "100");
     try {
+      params.set("query", activeLogQuery());
+      params.set("limit", $("#logLimit").value || "100");
       const payload = await request(`/logs/query?${params.toString()}`);
       renderLogs(payload);
       showToast(`查询完成，共 ${payload.entries?.length || 0} 条`);
@@ -469,15 +675,69 @@ function handleLabelInputKeydown(event) {
   }
 }
 
+function handleQueryLabelInputKeydown(event) {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  try {
+    addQueryLabel();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function handleResultAction(event) {
+  const copyButton = event.target.closest("button[data-copy]");
+  if (!copyButton) return;
+  try {
+    await copyText(copyButton.dataset.copy);
+    showToast("已复制");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function copyText(value) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand("copy");
+  textarea.remove();
+  if (!ok) {
+    throw new Error("复制失败");
+  }
+}
+
 function requiredValue(selector, message) {
   const value = $(selector).value.trim();
   if (!value) throw new Error(message);
   return value;
 }
 
+function renderEmptyResult(target, title, detail) {
+  target.className = "empty-state result-empty";
+  target.innerHTML = `
+    <strong>${escapeHTML(title)}</strong>
+    <span>${escapeHTML(detail)}</span>`;
+}
+
 function renderError(target, error) {
   target.className = "";
-  target.innerHTML = `<pre class="json-card">${escapeHTML(error.message)}</pre>`;
+  target.innerHTML = `
+    <div class="result-shell">
+      <div class="result-summary danger-summary">
+        <div>
+          <span class="result-badge">操作失败</span>
+          <h4>${escapeHTML(error.message)}</h4>
+        </div>
+      </div>
+    </div>`;
   showToast(error.message, "error");
 }
 
@@ -503,6 +763,10 @@ function formatBytes(value) {
   return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function byteLength(value) {
+  return new TextEncoder().encode(String(value ?? "")).length;
+}
+
 function formatTime(value) {
   if (!value) return "";
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
@@ -519,6 +783,4 @@ function escapeHTML(value) {
 
 bindNavigation();
 bindForms();
-fillSamples();
-fillLogSample();
 refreshAll();

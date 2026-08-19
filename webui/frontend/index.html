@@ -73,7 +73,6 @@
             <p class="eyebrow">Key Value</p>
             <h2>KV 操作</h2>
           </div>
-          <button id="sampleKV" type="button" class="secondary">填入示例</button>
         </div>
 
         <div class="columns">
@@ -127,7 +126,6 @@
             <p class="eyebrow">Logs</p>
             <h2>结构化日志</h2>
           </div>
-          <button id="sampleLog" type="button" class="secondary">填入示例</button>
         </div>
 
         <div class="columns">
@@ -169,16 +167,50 @@
 
         <article class="panel">
           <h3>查询日志</h3>
-          <form id="logQueryForm" class="query-grid">
+          <form id="logQueryForm" class="form-stack">
+            <div class="search-builder">
+              <label>
+                Search
+                <input id="queryMatcher" placeholder="request failed" autocomplete="off" />
+              </label>
+              <label>
+                Range
+                <select id="queryRange">
+                  <option value="5m">Last 5m</option>
+                  <option value="15m">Last 15m</option>
+                  <option value="1h" selected>Last 1h</option>
+                  <option value="6h">Last 6h</option>
+                  <option value="24h">Last 24h</option>
+                  <option value="168h">Last 7d</option>
+                </select>
+              </label>
+              <label>
+                Offset
+                <input id="queryOffset" placeholder="15m" autocomplete="off" />
+              </label>
+              <label>
+                Limit
+                <input id="logLimit" type="number" min="1" max="10000" value="100" />
+              </label>
+            </div>
+            <div class="label-editor" aria-labelledby="queryLabelsTitle">
+              <span id="queryLabelsTitle" class="field-title">Filter Labels</span>
+              <div class="label-fields">
+                <input id="queryLabelName" placeholder="name" autocomplete="off" />
+                <input id="queryLabelValue" placeholder="value" autocomplete="off" />
+                <button id="addQueryLabel" type="button" title="添加查询 Label">+</button>
+              </div>
+              <div id="queryLabelList" class="label-list" aria-live="polite"></div>
+            </div>
             <label>
               QueryFormat
               <input id="logQuery" placeholder='"failed"{app=api,level=ERROR}[1h]' autocomplete="off" />
             </label>
-            <label>
-              Limit
-              <input id="logLimit" type="number" min="1" max="10000" value="100" />
-            </label>
-            <button type="submit">查询</button>
+            <div class="button-row">
+              <button type="submit">查询</button>
+              <button id="buildLogQuery" type="button" class="secondary">生成查询</button>
+              <button id="clearQueryFilters" type="button" class="ghost">清空条件</button>
+            </div>
           </form>
         </article>
 
@@ -203,10 +235,6 @@
           <article class="panel">
             <h3>存储状态</h3>
             <div id="metricBars" class="metric-bars"></div>
-          </article>
-          <article class="panel">
-            <h3>Prometheus 原文</h3>
-            <pre id="metricsRaw" class="raw-box">尚未加载</pre>
           </article>
         </div>
       </section>

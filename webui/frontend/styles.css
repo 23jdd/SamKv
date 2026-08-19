@@ -33,6 +33,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -88,6 +89,7 @@ button:disabled {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -98,12 +100,23 @@ textarea {
   padding: 11px 12px;
 }
 
+select {
+  min-height: 44px;
+  appearance: none;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%) right 16px top 19px / 6px 6px no-repeat,
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%) right 10px top 19px / 6px 6px no-repeat,
+    #fff;
+  padding-right: 34px;
+}
+
 textarea {
   resize: vertical;
   min-height: 96px;
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--teal);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
@@ -360,6 +373,10 @@ h3 {
   gap: 16px;
 }
 
+#metrics .columns {
+  grid-template-columns: 1fr;
+}
+
 .form-stack {
   display: grid;
   gap: 14px;
@@ -442,15 +459,242 @@ h3 {
   flex-wrap: wrap;
 }
 
-.query-grid {
+.search-builder {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 160px 120px;
-  align-items: end;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(130px, 0.7fr) minmax(130px, 0.7fr) minmax(110px, 0.5fr);
   gap: 14px;
+  align-items: end;
 }
 
 .result-panel {
   min-height: 180px;
+}
+
+.result-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.result-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid #bfe3dc;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f0fdfa, #f7fbff);
+}
+
+.danger-summary {
+  border-color: #fecdd3;
+  background: #fff1f2;
+}
+
+.result-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--teal);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.danger-summary .result-badge {
+  background: var(--rose);
+}
+
+.result-summary h4 {
+  margin: 8px 0 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #12312f;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.summary-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.summary-stats span {
+  display: grid;
+  min-width: 96px;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.summary-stats strong {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.38fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.detail-item {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.detail-item span,
+.record-meta,
+.log-entry time {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.detail-item code,
+.detail-item pre,
+.detail-item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.detail-item pre,
+.log-entry pre {
+  max-height: 220px;
+  overflow: auto;
+  color: #142033;
+  line-height: 1.5;
+}
+
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.record-list,
+.log-stream {
+  display: grid;
+  gap: 10px;
+}
+
+.kv-record,
+.log-entry {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.kv-record {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 14px;
+}
+
+.kv-record-main {
+  min-width: 0;
+}
+
+.kv-record-main code {
+  display: block;
+  margin-bottom: 8px;
+  color: #1d4ed8;
+  overflow-wrap: anywhere;
+}
+
+.kv-record-main p {
+  margin: 0;
+  color: #334155;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.record-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.record-meta button,
+.log-entry-head button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.log-entry {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.log-entry.single {
+  background: var(--panel-soft);
+}
+
+.log-entry-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.log-entry-head div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.log-entry-head strong {
+  color: #1d4ed8;
+  font-size: 13px;
+}
+
+.log-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.log-entry pre {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.sequence-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sequence-grid code {
+  padding: 7px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .empty-state {
@@ -463,34 +707,20 @@ h3 {
   background: var(--panel-soft);
 }
 
-.table-wrap {
-  width: 100%;
-  overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+.result-empty {
+  gap: 8px;
+  text-align: center;
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 620px;
+.result-empty strong {
+  color: var(--text);
 }
 
-th,
-td {
-  padding: 12px;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-  vertical-align: top;
-}
-
-th {
-  background: #eef4fb;
-  color: #384152;
+.result-empty span {
+  color: var(--muted);
   font-size: 13px;
 }
 
-td code,
 .pill {
   display: inline-block;
   max-width: 520px;
@@ -505,20 +735,6 @@ td code,
   color: #0f5f59;
   font-size: 12px;
   font-weight: 800;
-}
-
-.json-card,
-.raw-box {
-  margin: 0;
-  width: 100%;
-  overflow: auto;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: #0f172a;
-  color: #dbeafe;
-  padding: 16px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .metric-bars {
@@ -603,8 +819,14 @@ td code,
   .hero-panel,
   .columns,
   .metric-grid,
-  .query-grid {
+  .search-builder,
+  .result-summary,
+  .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .summary-stats {
+    justify-content: flex-start;
   }
 
   h1 {
@@ -643,5 +865,15 @@ td code,
 
   .label-fields button {
     width: 100%;
+  }
+
+  .kv-record {
+    grid-template-columns: 1fr;
+  }
+
+  .record-meta,
+  .log-entry-head {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
