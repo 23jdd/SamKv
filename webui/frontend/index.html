@@ -138,10 +138,15 @@
                 Timestamp
                 <input id="logTimestamp" type="datetime-local" />
               </label>
-              <label>
-                Labels
-                <input id="logLabels" placeholder="app=api,level=ERROR,host=node-1" autocomplete="off" />
-              </label>
+              <div class="label-editor" aria-labelledby="logLabelsTitle">
+                <span id="logLabelsTitle" class="field-title">Labels</span>
+                <div class="label-fields">
+                  <input id="labelName" placeholder="name" autocomplete="off" />
+                  <input id="labelValue" placeholder="value" autocomplete="off" />
+                  <button id="addLogLabel" type="button" title="添加 Label">+</button>
+                </div>
+                <div id="logLabelList" class="label-list" aria-live="polite"></div>
+              </div>
               <label>
                 Message
                 <textarea id="logMessage" rows="5" placeholder="request failed"></textarea>

@@ -1,5 +1,6 @@
 const state = {
   apiBase: localStorage.getItem("samkv.apiBase") || "/api",
+  logLabels: {},
   metrics: {},
   rawMetrics: "",
 };
@@ -15,6 +16,7 @@ const elements = {
   healthDetail: $("#healthDetail"),
   kvResult: $("#kvResult"),
   logResult: $("#logResult"),
+  logLabelList: $("#logLabelList"),
   toast: $("#toast"),
   metricsRaw: $("#metricsRaw"),
   metricBars: $("#metricBars"),
@@ -129,20 +131,44 @@ function renderLabels(labels) {
     .join("");
 }
 
-function parseLabels(input) {
-  const result = {};
-  const raw = input.trim();
-  if (!raw) return result;
-  for (const part of raw.split(",")) {
-    const [name, ...valueParts] = part.split("=");
-    const key = name.trim();
-    const value = valueParts.join("=").trim();
-    if (!key || valueParts.length === 0) {
-      throw new Error("Labels 格式应为 app=api,level=ERROR");
-    }
-    result[key] = value;
+function renderLabelEditor() {
+  const names = Object.keys(state.logLabels).sort();
+  elements.logLabelList.innerHTML = names
+    .map(
+      (name) => `
+        <span class="label-chip">
+          <span>${escapeHTML(name)}=${escapeHTML(state.logLabels[name])}</span>
+          <button type="button" data-label="${escapeHTML(name)}" title="移除 ${escapeHTML(name)}">x</button>
+        </span>`,
+    )
+    .join("");
+}
+
+function addLogLabel() {
+  const nameInput = $("#labelName");
+  const valueInput = $("#labelValue");
+  const name = nameInput.value.trim();
+  const value = valueInput.value.trim();
+  if (!name) {
+    throw new Error("Label name 不能为空");
   }
-  return result;
+  if (!value) {
+    throw new Error("Label value 不能为空");
+  }
+  state.logLabels[name] = value;
+  nameInput.value = "";
+  valueInput.value = "";
+  nameInput.focus();
+  renderLabelEditor();
+}
+
+function setLogLabels(labels) {
+  state.logLabels = { ...labels };
+  renderLabelEditor();
+}
+
+function currentLogLabels() {
+  return { ...state.logLabels };
 }
 
 function optionalTimestamp(value) {
@@ -246,7 +272,7 @@ function fillSamples() {
 }
 
 function fillLogSample() {
-  $("#logLabels").value = "app=api,level=ERROR,host=node-1";
+  setLogLabels({ app: "api", level: "ERROR", host: "node-1" });
   $("#logMessage").value = "request failed";
   $("#logQuery").value = '"failed"{app=api,level=ERROR}[1h]';
   $("#logLimit").value = "100";
@@ -286,6 +312,21 @@ function bindForms() {
   $("#refreshMetrics").addEventListener("click", loadMetrics);
   $("#sampleKV").addEventListener("click", fillSamples);
   $("#sampleLog").addEventListener("click", fillLogSample);
+  $("#addLogLabel").addEventListener("click", () => {
+    try {
+      addLogLabel();
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  });
+  $("#labelName").addEventListener("keydown", handleLabelInputKeydown);
+  $("#labelValue").addEventListener("keydown", handleLabelInputKeydown);
+  elements.logLabelList.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-label]");
+    if (!button) return;
+    delete state.logLabels[button.dataset.label];
+    renderLabelEditor();
+  });
   $("#clearKVResult").addEventListener("click", () => {
     elements.kvResult.className = "empty-state";
     elements.kvResult.textContent = "等待操作结果";
@@ -368,7 +409,7 @@ function bindForms() {
     event.preventDefault();
     try {
       const body = {
-        labels: parseLabels($("#logLabels").value),
+        labels: currentLogLabels(),
         message: requiredValue("#logMessage", "Message 不能为空"),
       };
       const timestamp = optionalTimestamp($("#logTimestamp").value);
@@ -416,6 +457,16 @@ function bindForms() {
       renderError(elements.logResult, error);
     }
   });
+}
+
+function handleLabelInputKeydown(event) {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  try {
+    addLogLabel();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
 }
 
 function requiredValue(selector, message) {
