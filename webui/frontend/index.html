@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SamKV WebUI</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="/logo.png" alt="SamKV" />
+        <div>
+          <strong>SamKV</strong>
+          <span>LSM 控制台</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <a href="#overview" class="active">概览</a>
+        <a href="#kv">KV 操作</a>
+        <a href="#logs">结构化日志</a>
+        <a href="#metrics">指标</a>
+      </nav>
+      <div class="connection">
+        <label for="apiBase">API</label>
+        <div class="inline-control">
+          <input id="apiBase" value="/api" spellcheck="false" />
+          <button id="saveApiBase" class="icon-button" type="button" title="保存 API 地址">↗</button>
+        </div>
+        <p id="connectionText">通过 WebUI 代理访问 SamKV</p>
+      </div>
+    </aside>
+
+    <main class="shell">
+      <section id="overview" class="panel hero-panel">
+        <div class="hero-copy">
+          <p class="eyebrow">SamKV WebUI</p>
+          <h1>可视化管理 KV 与结构化日志</h1>
+          <p>健康状态、键值读写、范围扫描、日志写入查询和 Prometheus 指标集中在一个界面里。</p>
+        </div>
+        <div class="status-card">
+          <div class="status-topline">
+            <span id="healthDot" class="health-dot unknown"></span>
+            <strong id="healthTitle">检测中</strong>
+          </div>
+          <p id="healthDetail">正在连接 SamKV API...</p>
+          <button id="refreshAll" type="button">刷新全部</button>
+        </div>
+      </section>
+
+      <section class="metric-grid" aria-label="关键指标">
+        <article class="metric-tile">
+          <span>写入次数</span>
+          <strong id="metricWrites">--</strong>
+        </article>
+        <article class="metric-tile">
+          <span>读取次数</span>
+          <strong id="metricReads">--</strong>
+        </article>
+        <article class="metric-tile">
+          <span>SSTable</span>
+          <strong id="metricSSTables">--</strong>
+        </article>
+        <article class="metric-tile">
+          <span>Block Cache</span>
+          <strong id="metricCacheRate">--</strong>
+        </article>
+      </section>
+
+      <section id="kv" class="workspace">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Key Value</p>
+            <h2>KV 操作</h2>
+          </div>
+          <button id="sampleKV" type="button" class="secondary">填入示例</button>
+        </div>
+
+        <div class="columns">
+          <article class="panel">
+            <h3>写入 / 读取 / 删除</h3>
+            <form id="kvForm" class="form-stack">
+              <label>
+                Key
+                <input id="kvKey" placeholder="app/config" autocomplete="off" />
+              </label>
+              <label>
+                Value
+                <textarea id="kvValue" rows="5" placeholder="enabled"></textarea>
+              </label>
+              <div class="button-row">
+                <button id="putKV" type="submit">写入</button>
+                <button id="getKV" type="button" class="secondary">读取</button>
+                <button id="deleteKV" type="button" class="danger">删除</button>
+              </div>
+            </form>
+          </article>
+
+          <article class="panel">
+            <h3>范围扫描</h3>
+            <form id="scanForm" class="form-stack">
+              <label>
+                Start
+                <input id="scanStart" placeholder="app/" autocomplete="off" />
+              </label>
+              <label>
+                End
+                <input id="scanEnd" placeholder="app/z" autocomplete="off" />
+              </label>
+              <button type="submit">扫描</button>
+            </form>
+          </article>
+        </div>
+
+        <article class="panel result-panel">
+          <div class="result-head">
+            <h3>KV 结果</h3>
+            <button id="clearKVResult" type="button" class="ghost">清空</button>
+          </div>
+          <div id="kvResult" class="empty-state">等待操作结果</div>
+        </article>
+      </section>
+
+      <section id="logs" class="workspace">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Logs</p>
+            <h2>结构化日志</h2>
+          </div>
+          <button id="sampleLog" type="button" class="secondary">填入示例</button>
+        </div>
+
+        <div class="columns">
+          <article class="panel">
+            <h3>写入日志</h3>
+            <form id="logWriteForm" class="form-stack">
+              <label>
+                Timestamp
+                <input id="logTimestamp" type="datetime-local" />
+              </label>
+              <label>
+                Labels
+                <input id="logLabels" placeholder="app=api,level=ERROR,host=node-1" autocomplete="off" />
+              </label>
+              <label>
+                Message
+                <textarea id="logMessage" rows="5" placeholder="request failed"></textarea>
+              </label>
+              <button type="submit">写入日志</button>
+            </form>
+          </article>
+
+          <article class="panel">
+            <h3>批量写入</h3>
+            <form id="logBatchForm" class="form-stack">
+              <label>
+                JSON
+                <textarea id="logBatchJSON" rows="9" spellcheck="false" placeholder='{"entries":[{"labels":{"app":"api"},"message":"request started"}]}'></textarea>
+              </label>
+              <button type="submit">批量写入</button>
+            </form>
+          </article>
+        </div>
+
+        <article class="panel">
+          <h3>查询日志</h3>
+          <form id="logQueryForm" class="query-grid">
+            <label>
+              QueryFormat
+              <input id="logQuery" placeholder='"failed"{app=api,level=ERROR}[1h]' autocomplete="off" />
+            </label>
+            <label>
+              Limit
+              <input id="logLimit" type="number" min="1" max="10000" value="100" />
+            </label>
+            <button type="submit">查询</button>
+          </form>
+        </article>
+
+        <article class="panel result-panel">
+          <div class="result-head">
+            <h3>日志结果</h3>
+            <button id="clearLogResult" type="button" class="ghost">清空</button>
+          </div>
+          <div id="logResult" class="empty-state">等待日志操作结果</div>
+        </article>
+      </section>
+
+      <section id="metrics" class="workspace">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Metrics</p>
+            <h2>指标详情</h2>
+          </div>
+          <button id="refreshMetrics" type="button" class="secondary">刷新指标</button>
+        </div>
+        <div class="columns">
+          <article class="panel">
+            <h3>存储状态</h3>
+            <div id="metricBars" class="metric-bars"></div>
+          </article>
+          <article class="panel">
+            <h3>Prometheus 原文</h3>
+            <pre id="metricsRaw" class="raw-box">尚未加载</pre>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
